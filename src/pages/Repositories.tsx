@@ -1,0 +1,1667 @@
+import { useEffect, useState, useMemo } from "react";
+import {
+  listRepositories, getRepoProfile, refreshProfiles,
+  auditRepo, getHealthSnapshot, getFindings,
+  resolveGitHubRepo, syncGitHub,
+  detectCommands, runVerification, runBatchVerification, listVerificationRuns,
+  listPatchProposals, applyPatch, rejectPatch, rollbackPatch,
+  reindexRepo,
+  generateFixPlan, proposeFix, listFixPlans,
+  listAiProviders, previewFixPlanContext,
+} from "../api/ipc";
+import type {
+  Repository, RepoProfile, HealthSnapshot, Finding,
+  CategoryScore, RecommendedTask,
+  GitHubIntegration, VerificationCommand, VerificationResult, VerificationRun,
+  PatchProposal, Artifact, AiProvider, ContextPreview,
+} from "../types";
+import {
+  GitBranch, ExternalLink, Code2, Package, FileText, Shield,
+  Terminal, RefreshCw, ChevronRight, ChevronDown, Layers,
+  Github, Play, CheckCircle2, XCircle, RotateCcw,
+  Check, X, Search, ArrowUpDown,
+  Activity, Wand2, Eye, AlertTriangle,
+} from "lucide-react";
+import { LoadingSpinner } from "../components/LoadingSpinner";
+import { EmptyState } from "../components/EmptyState";
+
+type DetailTab = "overview" | "profile" | "audit" | "fixes" | "github" | "verify" | "patches";
+type SortKey = "path" | "branch" | "dirty" | "lastCommit" | "score" | "language";
+type SortDir = "asc" | "desc";
+
+interface Toast {
+  id: number;
+  message: string;
+  type: "success" | "error" | "info";
+}
+
+let toastCounter = 0;
+
+export function Repositories() {
+  const [repos, setRepos] = useState<Repository[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<DetailTab>("profile");
+  const [profile, setProfile] = useState<RepoProfile | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Audit state
+  const [snapshot, setSnapshot] = useState<HealthSnapshot | null>(null);
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [auditing, setAuditing] = useState(false);
+
+  // GitHub state
+  const [integration, setIntegration] = useState<GitHubIntegration | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  // Verification state
+  const [commands, setCommands] = useState<VerificationCommand[]>([]);
+  const [runningCmd, setRunningCmd] = useState<string | null>(null);
+  const [verifyResult, setVerifyResult] = useState<VerificationResult | null>(null);
+  const [verifyRuns, setVerifyRuns] = useState<VerificationRun[]>([]);
+  const [batchRunning, setBatchRunning] = useState(false);
+
+  // Patches state
+  const [patches, setPatches] = useState<PatchProposal[]>([]);
+
+  // Fixes state
+  const [fixPlans, setFixPlans] = useState<Artifact[]>([]);
+  const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
+  const [generatingPlan, setGeneratingPlan] = useState(false);
+  const [proposingFix, setProposingFix] = useState(false);
+  const [fixInstruction, setFixInstruction] = useState("");
+  const [fixTargetFile, setFixTargetFile] = useState("");
+  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
+  const [contextPreview, setContextPreview] = useState<ContextPreview | null>(null);
+  const [previewingContext, setPreviewingContext] = useState(false);
+
+  // Reindex state
+  const [reindexing, setReindexing] = useState(false);
+
+  // Filter & Sort state
+  const [filterText, setFilterText] = useState("");
+  const [filterDirty, setFilterDirty] = useState<"all" | "dirty" | "clean">("all");
+  const [filterRemote, setFilterRemote] = useState<"all" | "has" | "none">("all");
+  const [filterNoCi, setFilterNoCi] = useState(false);
+  const [filterNoReadme, setFilterNoReadme] = useState(false);
+  const [filterLanguage, setFilterLanguage] = useState<string>("all");
+  const [sortKey, setSortKey] = useState<SortKey>("path");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  // Toast state
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Profiles cache for filter/sort
+  const [profileCache, setProfileCache] = useState<Record<string, RepoProfile | null>>({});
+
+  function showToast(message: string, type: Toast["type"] = "info") {
+    const id = ++toastCounter;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }
+
+  useEffect(() => {
+    loadRepos();
+  }, []);
+
+  async function loadRepos() {
+    try {
+      setLoading(true);
+      setError(null);
+      const repoList = await listRepositories();
+      setRepos(repoList);
+      // Load profiles for filter/sort
+      const cache: Record<string, RepoProfile | null> = {};
+      for (const repo of repoList) {
+        try {
+          cache[repo.id] = await getRepoProfile(repo.id);
+        } catch {
+          cache[repo.id] = null;
+        }
+      }
+      setProfileCache(cache);
+    } catch (e: any) {
+      setError(e?.toString() ?? "Failed to load repositories");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSelectRepo(repoId: string) {
+    if (selectedRepoId === repoId) {
+      setSelectedRepoId(null);
+      setProfile(null);
+      setSnapshot(null);
+      setFindings([]);
+      setIntegration(null);
+      setCommands([]);
+      setVerifyResult(null);
+      setVerifyRuns([]);
+      setPatches([]);
+      setFixPlans([]);
+      setFixInstruction("");
+      setFixTargetFile("");
+      return;
+    }
+    setSelectedRepoId(repoId);
+    setActiveTab("overview");
+    setProfile(null);
+    setSnapshot(null);
+    setFindings([]);
+    setIntegration(null);
+    setCommands([]);
+    setVerifyResult(null);
+    setVerifyRuns([]);
+    setPatches([]);
+    setFixPlans([]);
+    setFixInstruction("");
+    setFixTargetFile("");
+    loadTabData(repoId, "profile");
+  }
+
+  async function loadTabData(repoId: string, tab: DetailTab) {
+    try {
+      switch (tab) {
+        case "overview":
+        case "profile":
+          setProfile(await getRepoProfile(repoId));
+          break;
+        case "audit": {
+          const snap = await getHealthSnapshot(repoId);
+          setSnapshot(snap);
+          if (snap) setFindings(await getFindings(snap.id));
+          break;
+        }
+        case "github":
+          try {
+            setIntegration(await resolveGitHubRepo(repoId));
+          } catch { setIntegration(null); }
+          break;
+        case "verify": {
+          const repo = repos.find(r => r.id === repoId);
+          if (repo) setCommands(await detectCommands(repo.worktreePath));
+          try { setVerifyRuns(await listVerificationRuns(repoId)); } catch { setVerifyRuns([]); }
+          break;
+        }
+        case "patches":
+          setPatches(await listPatchProposals(repoId));
+          break;
+        case "fixes": {
+          try { setFixPlans(await listFixPlans(repoId)); } catch { setFixPlans([]); }
+          try { setAiProviders(await listAiProviders()); } catch { setAiProviders([]); }
+          break;
+        }
+      }
+    } catch (e: any) {
+      console.error(`Failed to load tab ${tab}:`, e);
+    }
+  }
+
+  function handleTabChange(tab: DetailTab) {
+    setActiveTab(tab);
+    if (selectedRepoId) loadTabData(selectedRepoId, tab);
+  }
+
+  async function handleRefreshProfiles() {
+    try {
+      setRefreshing(true);
+      setError(null);
+      const count = await refreshProfiles();
+      if (selectedRepoId) {
+        setProfile(await getRepoProfile(selectedRepoId));
+      }
+      showToast(`Refreshed ${count} profiles`, "success");
+    } catch (e: any) {
+      setError(e?.toString() ?? "Failed to refresh profiles");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function handleAudit() {
+    if (!selectedRepoId) return;
+    try {
+      setAuditing(true);
+      const snap = await auditRepo(selectedRepoId);
+      setSnapshot(snap);
+      setFindings(await getFindings(snap.id));
+      showToast("Audit completed", "success");
+    } catch (e: any) {
+      setError(e?.toString() ?? "Audit failed");
+    } finally {
+      setAuditing(false);
+    }
+  }
+
+  async function handleSyncGitHub() {
+    if (!selectedRepoId) return;
+    try {
+      setSyncing(true);
+      const result = await syncGitHub(selectedRepoId);
+      showToast(`GitHub synced: ${JSON.stringify(result)}`, "success");
+    } catch (e: any) {
+      setError(e?.toString() ?? "GitHub sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function handleRunVerification(cmd: VerificationCommand) {
+    if (!selectedRepo) return;
+    try {
+      setRunningCmd(cmd.command);
+      setVerifyResult(null);
+      const result = await runVerification(cmd.command, selectedRepo.worktreePath, selectedRepo.id);
+      setVerifyResult(result);
+      try { setVerifyRuns(await listVerificationRuns(selectedRepo.id)); } catch { /* ignore */ }
+    } catch (e: any) {
+      setError(e?.toString() ?? "Verification failed");
+    } finally {
+      setRunningCmd(null);
+    }
+  }
+
+  async function handleBatchVerification() {
+    if (!selectedRepo) return;
+    const automaticCommands = commands.filter(
+      (command) => command.riskLevel !== "high" && command.riskLevel !== "critical",
+    );
+    if (automaticCommands.length === 0) {
+      showToast("No automatically approved verification commands are available", "info");
+      return;
+    }
+    try {
+      setBatchRunning(true);
+      await runBatchVerification(automaticCommands, selectedRepo.worktreePath, selectedRepo.id);
+      try { setVerifyRuns(await listVerificationRuns(selectedRepo.id)); } catch { /* ignore */ }
+      showToast(`Batch verification complete (${automaticCommands.length} commands)`, "success");
+    } catch (e: any) {
+      setError(e?.toString() ?? "Batch verification failed");
+    } finally {
+      setBatchRunning(false);
+    }
+  }
+
+  async function handleApplyPatch(id: string) {
+    try { await applyPatch(id); if (selectedRepoId) setPatches(await listPatchProposals(selectedRepoId)); showToast("Patch applied", "success"); }
+    catch (e: any) { setError(e?.toString() ?? "Apply failed"); showToast("Apply failed", "error"); }
+  }
+
+  async function handleRejectPatch(id: string) {
+    try { await rejectPatch(id, "Rejected by user"); if (selectedRepoId) setPatches(await listPatchProposals(selectedRepoId)); showToast("Patch rejected", "info"); }
+    catch (e: any) { setError(e?.toString() ?? "Reject failed"); showToast("Reject failed", "error"); }
+  }
+
+  async function handleRollbackPatch(id: string) {
+    try { await rollbackPatch(id); if (selectedRepoId) setPatches(await listPatchProposals(selectedRepoId)); showToast("Patch rolled back", "info"); }
+    catch (e: any) { setError(e?.toString() ?? "Rollback failed"); showToast("Rollback failed", "error"); }
+  }
+
+  async function handleReindex() {
+    if (!selectedRepoId) return;
+    try {
+      setReindexing(true);
+      const stats = await reindexRepo(selectedRepoId);
+      showToast(`Reindexed: ${stats.documents} documents, ${stats.chunks} chunks`, "success");
+    } catch (e: any) {
+      showToast("Reindex failed: " + (e?.toString() ?? "unknown error"), "error");
+    } finally {
+      setReindexing(false);
+    }
+  }
+
+  async function handleGenerateFixPlan() {
+    if (!selectedRepoId || !snapshot || !selectedProviderId) return;
+    try {
+      setGeneratingPlan(true);
+      const plan = await generateFixPlan(selectedRepoId, snapshot.id, selectedProviderId);
+      showToast(`Fix plan generated (tokens: ${plan.tokensIn}→${plan.tokensOut})`, "success");
+      setFixPlans(await listFixPlans(selectedRepoId));
+    } catch (e: any) {
+      setError(e?.toString() ?? "Generate fix plan failed");
+      showToast("Fix plan generation failed", "error");
+    } finally {
+      setGeneratingPlan(false);
+    }
+  }
+
+  async function handleProposeFix() {
+    if (!selectedRepoId || !selectedProviderId || !fixInstruction.trim()) return;
+    try {
+      setProposingFix(true);
+      const proposal = await proposeFix(selectedRepoId, selectedProviderId, fixInstruction, undefined, fixTargetFile || undefined);
+      showToast(`Fix proposed: ${proposal.description}`, "success");
+      setPatches(await listPatchProposals(selectedRepoId));
+      setFixInstruction("");
+      setFixTargetFile("");
+    } catch (e: any) {
+      setError(e?.toString() ?? "Propose fix failed");
+      showToast("Fix proposal failed", "error");
+    } finally {
+      setProposingFix(false);
+    }
+  }
+
+  async function handlePreviewContext() {
+    if (!selectedRepoId || !snapshot) return;
+    try {
+      setPreviewingContext(true);
+      setContextPreview(null);
+      const preview = await previewFixPlanContext(selectedRepoId, snapshot.id);
+      setContextPreview(preview);
+      showToast(`Context preview: ${preview.sections.length} sections, ~${preview.totalTokensEstimate} tokens`, "info");
+    } catch (e: any) {
+      setError(e?.toString() ?? "Context preview failed");
+      showToast("Context preview failed", "error");
+    } finally {
+      setPreviewingContext(false);
+    }
+  }
+
+  // Filter & Sort logic
+  const availableLanguages = useMemo(() => {
+    const langs = new Set<string>();
+    Object.values(profileCache).forEach((p) => {
+      if (p) p.languages.forEach((l) => langs.add(l));
+    });
+    return Array.from(langs).sort();
+  }, [profileCache]);
+
+  const filteredRepos = useMemo(() => {
+    let result = repos;
+
+    // Text filter
+    if (filterText) {
+      const lower = filterText.toLowerCase();
+      result = result.filter((r) =>
+        r.worktreePath.toLowerCase().includes(lower) ||
+        (r.currentBranch ?? "").toLowerCase().includes(lower) ||
+        (r.remoteOriginUrl ?? "").toLowerCase().includes(lower)
+      );
+    }
+
+    // Dirty/clean filter
+    if (filterDirty === "dirty") result = result.filter((r) => r.dirtyState);
+    else if (filterDirty === "clean") result = result.filter((r) => !r.dirtyState);
+
+    // Remote filter
+    if (filterRemote === "has") result = result.filter((r) => r.remoteOriginUrl);
+    else if (filterRemote === "none") result = result.filter((r) => !r.remoteOriginUrl);
+
+    // No CI filter
+    if (filterNoCi) {
+      result = result.filter((r) => {
+        const p = profileCache[r.id];
+        return !p || p.ciSystems.length === 0;
+      });
+    }
+
+    // No README filter
+    if (filterNoReadme) {
+      result = result.filter((r) => {
+        const p = profileCache[r.id];
+        return !p || !p.hasReadme;
+      });
+    }
+
+    // Language filter
+    if (filterLanguage !== "all") {
+      result = result.filter((r) => {
+        const p = profileCache[r.id];
+        return p && p.languages.includes(filterLanguage);
+      });
+    }
+
+    // Sort
+    result = [...result].sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "path":
+          cmp = repoName(a.worktreePath).localeCompare(repoName(b.worktreePath));
+          break;
+        case "branch":
+          cmp = (a.currentBranch ?? "").localeCompare(b.currentBranch ?? "");
+          break;
+        case "dirty":
+          cmp = Number(a.dirtyState) - Number(b.dirtyState);
+          break;
+        case "lastCommit": {
+          const da = a.lastCommitAt ? new Date(a.lastCommitAt).getTime() : 0;
+          const db = b.lastCommitAt ? new Date(b.lastCommitAt).getTime() : 0;
+          cmp = da - db;
+          break;
+        }
+        case "score":
+          cmp = 0; // scores not available in list view
+          break;
+        case "language": {
+          const la = profileCache[a.id]?.languages[0] ?? "";
+          const lb = profileCache[b.id]?.languages[0] ?? "";
+          cmp = la.localeCompare(lb);
+          break;
+        }
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+
+    return result;
+  }, [repos, filterText, filterDirty, filterRemote, filterNoCi, filterNoReadme, filterLanguage, sortKey, sortDir, profileCache]);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  const selectedRepo = repos.find((r) => r.id === selectedRepoId);
+  const selectedProfile = (selectedRepoId ? profileCache[selectedRepoId] : null) ?? profile;
+
+  const tabs: { key: DetailTab; label: string; icon: any }[] = [
+    { key: "overview", label: "Overview", icon: Activity },
+    { key: "profile", label: "Profile", icon: Code2 },
+    { key: "audit", label: "Health", icon: Shield },
+    { key: "fixes", label: "AI Fix", icon: Wand2 },
+    { key: "verify", label: "Verify", icon: CheckCircle2 },
+    { key: "patches", label: "Patches", icon: Layers },
+    { key: "github", label: "GitHub", icon: Github },
+  ];
+
+  return (
+    <div style={{ position: "relative" }}>
+      {/* Toast container */}
+      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 8 }}>
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            style={{
+              padding: "10px 16px",
+              borderRadius: 6,
+              background: t.type === "success" ? "#dcfce7" : t.type === "error" ? "#fef2f2" : "#dbeafe",
+              color: t.type === "success" ? "#166534" : t.type === "error" ? "#991b1b" : "#1e40af",
+              border: `1px solid ${t.type === "success" ? "#bbf7d0" : t.type === "error" ? "#fca5a5" : "#93c5fd"}`,
+              fontSize: 13,
+              fontWeight: 500,
+              maxWidth: 360,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+            }}
+          >
+            {t.message}
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700 }}>Repositories</h1>
+        <button
+          onClick={handleRefreshProfiles}
+          disabled={refreshing}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
+            background: refreshing ? "#94a3b8" : "#3b82f6", color: "#fff",
+            border: "none", borderRadius: 6, cursor: refreshing ? "not-allowed" : "pointer",
+            fontSize: 14, fontWeight: 600,
+          }}
+        >
+          <RefreshCw size={16} />
+          {refreshing ? "Refreshing..." : "Refresh Profiles"}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ padding: 12, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, marginBottom: 16, color: "#991b1b" }}>
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <LoadingSpinner message="Loading repositories..." />
+      ) : repos.length === 0 ? (
+        <EmptyState
+          icon={GitBranch}
+          title="No repositories discovered yet"
+          description="Add workspace roots and start a scan from the Dashboard."
+        />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: selectedRepoId ? "1fr 420px" : "1fr", gap: 16 }}>
+          {/* Repo List */}
+          <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+            {/* Filter bar */}
+            <div style={{ padding: "10px 12px", borderBottom: "1px solid #e2e8f0", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", background: "#f8fafc" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flex: "1 1 180px", minWidth: 140 }}>
+                <Search size={14} color="#94a3b8" />
+                <input
+                  type="text"
+                  placeholder="Filter repos..."
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  style={{ border: "1px solid #e2e8f0", borderRadius: 4, padding: "4px 8px", fontSize: 12, width: "100%", outline: "none" }}
+                />
+              </div>
+              <select value={filterDirty} onChange={(e) => setFilterDirty(e.target.value as any)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                <option value="all">All status</option>
+                <option value="dirty">Dirty only</option>
+                <option value="clean">Clean only</option>
+              </select>
+              <select value={filterRemote} onChange={(e) => setFilterRemote(e.target.value as any)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                <option value="all">All remotes</option>
+                <option value="has">Has remote</option>
+                <option value="none">No remote</option>
+              </select>
+              {availableLanguages.length > 0 && (
+                <select value={filterLanguage} onChange={(e) => setFilterLanguage(e.target.value)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                  <option value="all">All languages</option>
+                  {availableLanguages.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              )}
+              <label htmlFor="af-filter-noci" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#64748b", cursor: "pointer" }}>
+                <input type="checkbox" id="af-filter-noci" checked={filterNoCi} onChange={(e) => setFilterNoCi(e.target.checked)} /> No CI
+              </label>
+              <label htmlFor="af-filter-noreadme" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#64748b", cursor: "pointer" }}>
+                <input type="checkbox" id="af-filter-noreadme" checked={filterNoReadme} onChange={(e) => setFilterNoReadme(e.target.checked)} /> No README
+              </label>
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                    <th style={{ width: 32, padding: "10px 8px" }}></th>
+                    <SortableHeader label="Path" sortKey="path" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <SortableHeader label="Branch" sortKey="branch" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <th style={{ textAlign: "left", padding: "10px 12px", color: "#64748b", fontWeight: 600 }}>Head SHA</th>
+                    <th style={{ textAlign: "left", padding: "10px 12px", color: "#64748b", fontWeight: 600 }}>Remote</th>
+                    <SortableHeader label="Status" sortKey="dirty" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <SortableHeader label="Last Commit" sortKey="lastCommit" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRepos.map((repo) => (
+                  <tr
+                    key={repo.id}
+                    onClick={() => handleSelectRepo(repo.id)}
+                    style={{
+                      borderBottom: "1px solid #f1f5f9",
+                      background: selectedRepoId === repo.id ? "#eff6ff" : "transparent",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <td style={{ padding: "10px 4px", textAlign: "center", color: "#94a3b8" }}>
+                      {selectedRepoId === repo.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </td>
+                    <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 12, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {repoName(repo.worktreePath)}
+                      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{repo.worktreePath}</div>
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <GitBranch size={14} color="#64748b" />
+                        {repo.currentBranch ?? "—"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, color: "#64748b" }}>
+                      {repo.headSha ? repo.headSha.slice(0, 8) : "—"}
+                    </td>
+                    <td style={{ padding: "10px 12px", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {repo.remoteOriginUrl ? (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#3b82f6" }}>
+                          <ExternalLink size={12} />
+                          {repo.remoteOriginUrl.replace(/\.git$/, "").replace(/^https?:\/\//, "")}
+                        </span>
+                      ) : "—"}
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>
+                      {repo.dirtyState ? (
+                        <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "#fef3c7", color: "#92400e" }}>dirty</span>
+                      ) : (
+                        <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "#dcfce7", color: "#166534" }}>clean</span>
+                      )}
+                      {repo.aheadBehind && (repo.aheadBehind.ahead > 0 || repo.aheadBehind.behind > 0) && (
+                        <span style={{ marginLeft: 4, fontSize: 11, color: "#64748b" }}>
+                          ↑{repo.aheadBehind.ahead} ↓{repo.aheadBehind.behind}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: "10px 12px", color: "#64748b", fontSize: 12 }}>
+                      {repo.lastCommitAt ? new Date(repo.lastCommitAt).toLocaleDateString() : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+            {filteredRepos.length === 0 && repos.length > 0 && (
+              <div style={{ padding: 24, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+                No repositories match current filters.
+              </div>
+            )}
+          </div>
+
+          {/* Detail Panel */}
+          {selectedRepoId && selectedRepo && (
+            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e2e8f0", overflow: "hidden", maxHeight: "calc(100vh - 120px)", display: "flex", flexDirection: "column" }}>
+              {/* Summary Header */}
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0" }}>
+                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+                  <Code2 size={18} color="#3b82f6" />
+                  {repoName(selectedRepo.worktreePath)}
+                </h3>
+                <p style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginBottom: 6 }}>
+                  {selectedRepo.worktreePath}
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                  {selectedRepo.currentBranch && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "#64748b" }}>
+                      <GitBranch size={11} /> {selectedRepo.currentBranch}
+                    </span>
+                  )}
+                  <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: selectedRepo.dirtyState ? "#fef3c7" : "#dcfce7", color: selectedRepo.dirtyState ? "#92400e" : "#166534" }}>
+                    {selectedRepo.dirtyState ? "dirty" : "clean"}
+                  </span>
+                  {selectedRepo.remoteOriginUrl && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "#3b82f6" }}>
+                      <ExternalLink size={11} /> {selectedRepo.remoteOriginUrl.replace(/\.git$/, "").replace(/^https?:\/\//, "").split("/").slice(-2).join("/")}
+                    </span>
+                  )}
+                  {selectedProfile && selectedProfile.languages.length > 0 && (
+                    <span style={{ fontSize: 11, color: "#64748b" }}>{selectedProfile.languages.join(", ")}</span>
+                  )}
+                  {snapshot && (
+                    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: snapshot.score >= 80 ? "#dcfce7" : snapshot.score >= 50 ? "#fef3c7" : "#fef2f2", color: snapshot.score >= 80 ? "#166534" : snapshot.score >= 50 ? "#92400e" : "#991b1b" }}>
+                      Score: {snapshot.score}
+                    </span>
+                  )}
+                  {verifyResult && (
+                    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: verifyResult.success ? "#dcfce7" : "#fef2f2", color: verifyResult.success ? "#166534" : "#991b1b" }}>
+                      Verify: {verifyResult.success ? "pass" : "fail"}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Tabs */}
+              <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", overflow: "auto" }}>
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => handleTabChange(tab.key)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 4,
+                      padding: "8px 12px", border: "none", background: "transparent",
+                      cursor: "pointer", fontSize: 12, fontWeight: activeTab === tab.key ? 600 : 400,
+                      color: activeTab === tab.key ? "#3b82f6" : "#64748b",
+                      borderBottom: activeTab === tab.key ? "2px solid #3b82f6" : "2px solid transparent",
+                    }}
+                  >
+                    <tab.icon size={14} />
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab Content */}
+              <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
+                {activeTab === "overview" && (
+                  <OverviewTab
+                    profile={selectedProfile}
+                    snapshot={snapshot}
+                    findings={findings}
+                    verifyResult={verifyResult}
+                    reindexing={reindexing}
+                    onAudit={handleAudit}
+                    onReindex={handleReindex}
+                    onSync={handleSyncGitHub}
+                  />
+                )}
+                {activeTab === "profile" && <ProfileTab profile={selectedProfile} />}
+                {activeTab === "audit" && (
+                  <AuditTab
+                    snapshot={snapshot}
+                    findings={findings}
+                    auditing={auditing}
+                    onAudit={handleAudit}
+                  />
+                )}
+                {activeTab === "fixes" && (
+                  <FixesTab
+                    fixPlans={fixPlans}
+                    aiProviders={aiProviders}
+                    selectedProviderId={selectedProviderId}
+                    onSelectProvider={setSelectedProviderId}
+                    generatingPlan={generatingPlan}
+                    onGeneratePlan={handleGenerateFixPlan}
+                    proposingFix={proposingFix}
+                    onProposeFix={handleProposeFix}
+                    fixInstruction={fixInstruction}
+                    onFixInstructionChange={setFixInstruction}
+                    fixTargetFile={fixTargetFile}
+                    onFixTargetFileChange={setFixTargetFile}
+                    hasSnapshot={!!snapshot}
+                    contextPreview={contextPreview}
+                    previewingContext={previewingContext}
+                    onPreviewContext={handlePreviewContext}
+                  />
+                )}
+                {activeTab === "github" && (
+                  <GitHubTab
+                    integration={integration}
+                    syncing={syncing}
+                    onSync={handleSyncGitHub}
+                  />
+                )}
+                {activeTab === "verify" && (
+                  <VerifyTab
+                    commands={commands}
+                    runningCmd={runningCmd}
+                    result={verifyResult}
+                    onRun={handleRunVerification}
+                    runs={verifyRuns}
+                    batchRunning={batchRunning}
+                    onBatchRun={handleBatchVerification}
+                  />
+                )}
+                {activeTab === "patches" && (
+                  <PatchesTab
+                    patches={patches}
+                    onApply={handleApplyPatch}
+                    onReject={handleRejectPatch}
+                    onRollback={handleRollbackPatch}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Overview Tab ---
+
+function OverviewTab({ profile, snapshot, findings, verifyResult, reindexing, onAudit, onReindex, onSync }: {
+  profile: RepoProfile | null;
+  snapshot: HealthSnapshot | null;
+  findings: Finding[];
+  verifyResult: VerificationResult | null;
+  reindexing: boolean;
+  onAudit: () => void;
+  onReindex: () => void;
+  onSync: () => void;
+}) {
+  // Parse categoryScores JSON
+  let categoryScores: Record<string, CategoryScore> = {};
+  let recommendedTasks: RecommendedTask[] = [];
+  if (snapshot) {
+    try { categoryScores = JSON.parse(snapshot.categoryScores); } catch { /* ignore parse errors */ }
+    try { recommendedTasks = JSON.parse(snapshot.recommendedTasks); } catch { /* ignore parse errors */ }
+  }
+
+  return (
+    <div>
+      {/* Quick Actions */}
+      <div style={{ marginBottom: 16 }}>
+        <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Quick Actions</h4>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <button onClick={onAudit} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "#10b981", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+            <Shield size={12} /> Run Audit
+          </button>
+          <button onClick={onReindex} disabled={reindexing} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: reindexing ? "#94a3b8" : "#3b82f6", color: "#fff", border: "none", borderRadius: 4, cursor: reindexing ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600 }}>
+            <RefreshCw size={12} /> {reindexing ? "Indexing..." : "Reindex"}
+          </button>
+          <button onClick={onSync} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "#64748b", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+            <Github size={12} /> Sync GitHub
+          </button>
+        </div>
+      </div>
+
+      {/* Profile Summary */}
+      {profile && (
+        <div style={{ marginBottom: 16 }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Tech Stack</h4>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {profile.languages.map((l) => <Tag key={l} label={l} color="#3b82f6" />)}
+            {profile.frameworks.map((f) => <Tag key={f} label={f} color="#8b5cf6" />)}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+            <MiniBadge label="README" active={profile.hasReadme} />
+            <MiniBadge label="LICENSE" active={profile.hasLicense} />
+            <MiniBadge label="CI" active={profile.ciSystems.length > 0} />
+          </div>
+        </div>
+      )}
+
+      {/* Health Score Summary */}
+      {snapshot && (
+        <div style={{ marginBottom: 16 }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Health</h4>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+              background: snapshot.score >= 80 ? "#dcfce7" : snapshot.score >= 50 ? "#fef3c7" : "#fef2f2",
+              color: snapshot.score >= 80 ? "#166534" : snapshot.score >= 50 ? "#92400e" : "#991b1b",
+              fontSize: 16, fontWeight: 700,
+            }}>
+              {snapshot.score}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>Score</div>
+              <div style={{ fontSize: 11, color: "#94a3b8" }}>{findings.length} findings</div>
+            </div>
+          </div>
+          {Object.keys(categoryScores).length > 0 && (
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+              {Object.entries(categoryScores).map(([cat, cs]) => (
+                <div key={cat} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
+                  <span style={{ minWidth: 90, color: "#475569", fontWeight: 500 }}>{cat}</span>
+                  <div style={{ flex: 1, height: 6, background: "#e2e8f0", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ width: `${cs.maxScore > 0 ? (cs.score / cs.maxScore) * 100 : 0}%`, height: "100%", background: cs.score / (cs.maxScore || 1) >= 0.8 ? "#10b981" : cs.score / (cs.maxScore || 1) >= 0.5 ? "#f59e0b" : "#ef4444", borderRadius: 3 }} />
+                  </div>
+                  <span style={{ color: "#64748b", minWidth: 32, textAlign: "right" }}>{cs.score}/{cs.maxScore}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Verification Summary */}
+      {verifyResult && (
+        <div style={{ marginBottom: 16 }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Last Verification</h4>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 8, background: verifyResult.success ? "#f0fdf4" : "#fef2f2", borderRadius: 4, border: `1px solid ${verifyResult.success ? "#bbf7d0" : "#fca5a5"}` }}>
+            {verifyResult.success ? <CheckCircle2 size={14} color="#166534" /> : <XCircle size={14} color="#991b1b" />}
+            <span style={{ fontSize: 12, fontWeight: 600, color: verifyResult.success ? "#166534" : "#991b1b" }}>
+              {verifyResult.success ? "Passed" : "Failed"}
+            </span>
+            {verifyResult.exitCode !== undefined && (
+              <span style={{ fontSize: 11, color: "#64748b" }}>exit: {verifyResult.exitCode}</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Recommended Tasks */}
+      {recommendedTasks.length > 0 && (
+        <div>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Recommended Tasks</h4>
+          {recommendedTasks.map((task, i) => (
+            <div key={i} style={{ padding: 8, background: "#f8fafc", borderRadius: 4, marginBottom: 4, border: "1px solid #e2e8f0", fontSize: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <SeverityBadge severity={task.priority} />
+                <span style={{ fontWeight: 600 }}>{task.title}</span>
+              </div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{task.description}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!profile && !snapshot && !verifyResult && (
+        <div style={{ textAlign: "center", padding: 24, color: "#94a3b8" }}>
+          <Activity size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
+          <p style={{ fontSize: 13 }}>No data yet for this repository.</p>
+          <p style={{ fontSize: 11 }}>Use the actions above to audit, index, or sync this repo.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Profile Tab ---
+
+function ProfileTab({ profile }: { profile: RepoProfile | null }) {
+  if (!profile) {
+    return (
+      <div style={{ textAlign: "center", padding: 24, color: "#94a3b8" }}>
+        <Shield size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
+        <p style={{ fontSize: 13 }}>No profile available</p>
+        <p style={{ fontSize: 11 }}>Run a scan or click "Refresh Profiles" to detect tech stack.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <ProfileSection icon={Code2} title="Languages" color="#3b82f6">
+        {profile.languages.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {profile.languages.map((lang) => <Tag key={lang} label={lang} color="#3b82f6" />)}
+          </div>
+        ) : <EmptyText>No languages detected</EmptyText>}
+      </ProfileSection>
+
+      <ProfileSection icon={Package} title="Frameworks" color="#8b5cf6">
+        {profile.frameworks.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {profile.frameworks.map((fw) => <Tag key={fw} label={fw} color="#8b5cf6" />)}
+          </div>
+        ) : <EmptyText>No frameworks detected</EmptyText>}
+      </ProfileSection>
+
+      <ProfileSection icon={Layers} title="Package Managers" color="#10b981">
+        {profile.packageManagers.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {profile.packageManagers.map((pm) => <Tag key={pm} label={pm} color="#10b981" />)}
+          </div>
+        ) : <EmptyText>No package managers detected</EmptyText>}
+      </ProfileSection>
+
+      <ProfileSection icon={Terminal} title="Scripts" color="#f59e0b">
+        {Object.keys(profile.scripts).length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {Object.entries(profile.scripts).map(([key, value]) => (
+              <div key={key} style={{ fontSize: 11, display: "flex", gap: 6 }}>
+                <span style={{ color: "#f59e0b", fontWeight: 600, minWidth: 80 }}>{key.replace(/^(npm|cargo|python):/, "")}</span>
+                <span style={{ color: "#64748b", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyText>No scripts detected</EmptyText>}
+      </ProfileSection>
+
+      <ProfileSection icon={RefreshCw} title="CI Systems" color="#06b6d4">
+        {profile.ciSystems.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {profile.ciSystems.map((ci) => <Tag key={ci} label={ci} color="#06b6d4" />)}
+          </div>
+        ) : <EmptyText>No CI systems detected</EmptyText>}
+      </ProfileSection>
+
+      <ProfileSection icon={FileText} title="Documentation" color="#64748b">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <MiniBadge label="README" active={profile.hasReadme} />
+          <MiniBadge label="LICENSE" active={profile.hasLicense} />
+          {profile.licenseType && (
+            <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "#dbeafe", color: "#1e40af" }}>
+              {profile.licenseType}
+            </span>
+          )}
+        </div>
+      </ProfileSection>
+
+      <div style={{ marginTop: 16, fontSize: 10, color: "#94a3b8" }}>
+        Profiled: {new Date(profile.detectedAt).toLocaleString()}
+      </div>
+    </>
+  );
+}
+
+// --- Audit Tab ---
+
+function AuditTab({ snapshot, findings, auditing, onAudit }: {
+  snapshot: HealthSnapshot | null; findings: Finding[]; auditing: boolean; onAudit: () => void;
+}) {
+  const categoryScores: Record<string, CategoryScore> | null = useMemo(() => {
+    if (!snapshot?.categoryScores) return null;
+    try { return JSON.parse(snapshot.categoryScores); } catch { return null; }
+  }, [snapshot?.categoryScores]);
+
+  const recommendedTasks: RecommendedTask[] = useMemo(() => {
+    if (!snapshot?.recommendedTasks) return [];
+    try { return JSON.parse(snapshot.recommendedTasks); } catch { return []; }
+  }, [snapshot?.recommendedTasks]);
+
+  return (
+    <>
+      <button
+        onClick={onAudit}
+        disabled={auditing}
+        style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
+          background: auditing ? "#94a3b8" : "#10b981", color: "#fff",
+          border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, marginBottom: 16,
+        }}
+      >
+        <Shield size={14} />
+        {auditing ? "Auditing..." : "Run Audit"}
+      </button>
+
+      {snapshot && (
+        <>
+          {/* Overall Score */}
+          <div style={{ padding: 16, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                background: snapshot.score >= 80 ? "#dcfce7" : snapshot.score >= 50 ? "#fef3c7" : "#fef2f2",
+                color: snapshot.score >= 80 ? "#166534" : snapshot.score >= 50 ? "#92400e" : "#991b1b",
+                fontSize: 20, fontWeight: 700,
+              }}>
+                {snapshot.score}
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Health Score</div>
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  {snapshot.score >= 80 ? "Good — repo meets most quality standards" :
+                   snapshot.score >= 50 ? "Fair — some areas need attention" :
+                   "Needs work — significant issues found"}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8" }}>
+              Checked: {new Date(snapshot.createdAt).toLocaleString()} · Weighted average across 10 categories
+            </div>
+          </div>
+
+          {/* Category Breakdown */}
+          {categoryScores && (
+            <div style={{ marginBottom: 12 }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Category Breakdown</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+                {Object.entries(categoryScores).sort((a, b) => b[1].weight - a[1].weight).map(([cat, cs]) => (
+                  <div key={cat} style={{ padding: 8, background: "#fff", borderRadius: 4, border: "1px solid #e2e8f0", fontSize: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{cat.replace(/_/g, " ")}</span>
+                      <span style={{ fontWeight: 700, color: cs.score >= 80 ? "#166534" : cs.score >= 50 ? "#92400e" : "#991b1b" }}>
+                        {cs.score}/{cs.maxScore}
+                      </span>
+                    </div>
+                    <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{
+                        width: `${(cs.score / cs.maxScore) * 100}%`, height: "100%",
+                        background: cs.score >= 80 ? "#22c55e" : cs.score >= 50 ? "#f59e0b" : "#ef4444",
+                        borderRadius: 2,
+                      }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+                      weight: {cs.weight.toFixed(1)} · {cs.findings.length} finding{cs.findings.length !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recommended Tasks */}
+          {recommendedTasks.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Recommended Actions ({recommendedTasks.length})</h4>
+              {recommendedTasks.map((task, i) => (
+                <div key={i} style={{ padding: 8, background: "#fffbeb", borderRadius: 4, marginBottom: 4, border: "1px solid #fde68a", fontSize: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                    <SeverityBadge severity={task.priority === "high" ? "critical" : task.priority === "medium" ? "warning" : "info"} />
+                    <span style={{ fontWeight: 600 }}>{task.title}</span>
+                    <span style={{ color: "#64748b" }}>— {task.category}</span>
+                  </div>
+                  <div style={{ color: "#475569" }}>{task.description}</div>
+                  {task.autoFixable && <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2 }}>⚡ Auto-fixable</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Findings */}
+          {findings.length > 0 && (
+            <div>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Findings ({findings.length})</h4>
+              {findings.map((f) => (
+                <div key={f.id} style={{ padding: 8, background: "#fff", borderRadius: 4, marginBottom: 4, border: "1px solid #e2e8f0", fontSize: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                    <SeverityBadge severity={f.severity} />
+                    <span style={{ fontWeight: 600 }}>{f.title}</span>
+                    <span style={{ color: "#64748b" }}> - {f.category}</span>
+                  </div>
+                  <div style={{ color: "#475569", marginBottom: 2 }}>{f.description}</div>
+                  {f.filePath && <div style={{ fontFamily: "monospace", fontSize: 11, color: "#94a3b8" }}>{f.filePath}</div>}
+                  {f.suggestedFix && <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2 }}>💡 {f.suggestedFix}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {!snapshot && !auditing && (
+        <p style={{ color: "#94a3b8", fontSize: 13 }}>Click "Run Audit" to check repository health across 10 categories: runnable, tests, CI, docs, dependencies, security, release, git hygiene, public surface, and platform compatibility.</p>
+      )}
+    </>
+  );
+}
+
+// --- Fixes Tab ---
+
+function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
+  generatingPlan, onGeneratePlan, proposingFix, onProposeFix,
+  fixInstruction, onFixInstructionChange, fixTargetFile, onFixTargetFileChange,
+  hasSnapshot, contextPreview, previewingContext, onPreviewContext }: {
+  fixPlans: Artifact[]; aiProviders: AiProvider[]; selectedProviderId: string;
+  onSelectProvider: (id: string) => void; generatingPlan: boolean;
+  onGeneratePlan: () => void; proposingFix: boolean; onProposeFix: () => void;
+  fixInstruction: string; onFixInstructionChange: (v: string) => void;
+  fixTargetFile: string; onFixTargetFileChange: (v: string) => void;
+  hasSnapshot: boolean;
+  contextPreview: ContextPreview | null;
+  previewingContext: boolean;
+  onPreviewContext: () => void;
+}) {
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: 8 }}>
+          <Wand2 size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+          AI Fix Assistant
+        </h3>
+
+        {/* Provider selector */}
+        <div style={{ marginBottom: 12 }}>
+          <label htmlFor="af-ai-provider" style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 4 }}>
+            AI Provider
+          </label>
+          {aiProviders.length === 0 ? (
+            <p style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
+              No AI providers configured. Add API keys in Settings.
+            </p>
+          ) : (
+            <select
+              id="af-ai-provider"
+              value={selectedProviderId}
+              onChange={(e) => onSelectProvider(e.target.value)}
+              style={{ fontSize: 12, padding: "4px 8px", borderRadius: 4, border: "1px solid #e2e8f0", width: "100%" }}
+            >
+              <option value="">Select provider...</option>
+              {aiProviders.map((p) => (
+                <option key={p.id} value={p.id}>{p.name} ({p.adapterType})</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* Generate Fix Plan */}
+        <div style={{ marginBottom: 12, padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 6 }}>Generate Fix Plan</h4>
+          <p style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
+            Analyze audit findings and generate a prioritized fix plan using AI.
+          </p>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={onGeneratePlan}
+              disabled={!selectedProviderId || !hasSnapshot || generatingPlan}
+              style={{
+                display: "flex", alignItems: "center", gap: 4, padding: "6px 12px",
+                background: (!selectedProviderId || !hasSnapshot || generatingPlan) ? "#e2e8f0" : "#7c3aed",
+                color: (!selectedProviderId || !hasSnapshot || generatingPlan) ? "#94a3b8" : "#fff",
+                border: "none", borderRadius: 4, cursor: (!selectedProviderId || !hasSnapshot || generatingPlan) ? "not-allowed" : "pointer",
+                fontSize: 12, fontWeight: 600,
+              }}
+            >
+              <Wand2 size={12} />
+              {generatingPlan ? "Generating..." : "Generate Fix Plan"}
+            </button>
+            <button
+              onClick={onPreviewContext}
+              disabled={!hasSnapshot || previewingContext}
+              style={{
+                display: "flex", alignItems: "center", gap: 4, padding: "6px 12px",
+                background: (!hasSnapshot || previewingContext) ? "#e2e8f0" : "#3b82f6",
+                color: (!hasSnapshot || previewingContext) ? "#94a3b8" : "#fff",
+                border: "none", borderRadius: 4, cursor: (!hasSnapshot || previewingContext) ? "not-allowed" : "pointer",
+                fontSize: 12, fontWeight: 600,
+              }}
+            >
+              <Eye size={12} />
+              {previewingContext ? "Loading..." : "Preview Context"}
+            </button>
+          </div>
+          {!hasSnapshot && (
+            <p style={{ fontSize: 10, color: "#f59e0b", marginTop: 4 }}>Run a health audit first to enable fix plan generation.</p>
+          )}
+        </div>
+
+        {/* Context Preview */}
+        {contextPreview && (
+          <div style={{ marginBottom: 12, padding: 12, background: "#eff6ff", borderRadius: 6, border: "1px solid #bfdbfe" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+              <Eye size={14} color="#3b82f6" />
+              <h4 style={{ fontSize: 12, fontWeight: 600, color: "#1e40af", margin: 0 }}>Context Preview</h4>
+            </div>
+            <div style={{ fontSize: 11, color: "#475569", marginBottom: 6 }}>
+              <strong>Purpose:</strong> {contextPreview.purpose}
+            </div>
+            <div style={{ fontSize: 11, color: "#475569", marginBottom: 6 }}>
+              <strong>Tokens:</strong> ~{contextPreview.totalTokensEstimate} / {contextPreview.maxTokens} max
+            </div>
+            {contextPreview.secretsFound.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, padding: "4px 8px", background: "#fef3c7", borderRadius: 4, border: "1px solid #fde68a" }}>
+                <AlertTriangle size={12} color="#92400e" />
+                <span style={{ fontSize: 11, color: "#92400e", fontWeight: 600 }}>
+                  {contextPreview.secretsFound.length} secret(s) detected — will be redacted before sending to AI
+                </span>
+              </div>
+            )}
+            {contextPreview.secretCountAfterRedaction > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, padding: "4px 8px", background: "#fef2f2", borderRadius: 4, border: "1px solid #fca5a5" }}>
+                <AlertTriangle size={12} color="#991b1b" />
+                <span style={{ fontSize: 11, color: "#991b1b", fontWeight: 600 }}>
+                  {contextPreview.secretCountAfterRedaction} secret(s) remain after redaction — review before proceeding
+                </span>
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4, fontWeight: 600 }}>Sections:</div>
+            {contextPreview.sections.map((s, i) => (
+              <div key={i} style={{ padding: "6px 8px", marginBottom: 4, background: "#fff", borderRadius: 4, border: "1px solid #e2e8f0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#334155" }}>{s.label}</span>
+                  <span style={{ fontSize: 10, color: "#94a3b8" }}>~{s.tokensEstimate} tokens</span>
+                </div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>Source: {s.source}</div>
+                <pre style={{ fontSize: 10, color: "#475569", background: "#f8fafc", padding: 4, borderRadius: 3, overflow: "auto", maxHeight: 80, whiteSpace: "pre-wrap", margin: 0 }}>
+                  {s.contentPreview}
+                </pre>
+              </div>
+            ))}
+            {contextPreview.promptPreview && (
+              <details style={{ marginTop: 8 }}>
+                <summary style={{ fontSize: 11, color: "#3b82f6", cursor: "pointer", fontWeight: 600 }}>Full Prompt Preview</summary>
+                <pre style={{ fontSize: 10, color: "#475569", background: "#fff", padding: 8, borderRadius: 4, overflow: "auto", maxHeight: 300, whiteSpace: "pre-wrap", marginTop: 4 }}>
+                  {contextPreview.promptPreview}
+                </pre>
+              </details>
+            )}
+          </div>
+        )}
+
+        {/* Propose Fix */}
+        <div style={{ marginBottom: 12, padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 6 }}>Propose a Fix</h4>
+          <div style={{ marginBottom: 8 }}>
+            <label htmlFor="af-fix-instruction" style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 4 }}>
+              Instruction
+            </label>
+            <textarea
+              id="af-fix-instruction"
+              value={fixInstruction}
+              onChange={(e) => onFixInstructionChange(e.target.value)}
+              placeholder="Describe what you want to fix (e.g., 'Fix the missing return type in src/main.ts')"
+              rows={3}
+              style={{ fontSize: 12, padding: "6px 8px", borderRadius: 4, border: "1px solid #e2e8f0", width: "100%", resize: "vertical", fontFamily: "inherit" }}
+            />
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <label htmlFor="af-fix-target" style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 4 }}>
+              Target File (optional)
+            </label>
+            <input
+              id="af-fix-target"
+              value={fixTargetFile}
+              onChange={(e) => onFixTargetFileChange(e.target.value)}
+              placeholder="e.g., src/main.ts"
+              style={{ fontSize: 12, padding: "4px 8px", borderRadius: 4, border: "1px solid #e2e8f0", width: "100%" }}
+            />
+          </div>
+          <button
+            onClick={onProposeFix}
+            disabled={!selectedProviderId || !fixInstruction.trim() || proposingFix}
+            style={{
+              display: "flex", alignItems: "center", gap: 4, padding: "6px 12px",
+              background: (!selectedProviderId || !fixInstruction.trim() || proposingFix) ? "#e2e8f0" : "#7c3aed",
+              color: (!selectedProviderId || !fixInstruction.trim() || proposingFix) ? "#94a3b8" : "#fff",
+              border: "none", borderRadius: 4, cursor: (!selectedProviderId || !fixInstruction.trim() || proposingFix) ? "not-allowed" : "pointer",
+              fontSize: 12, fontWeight: 600,
+            }}
+          >
+            <Wand2 size={12} />
+            {proposingFix ? "Proposing..." : "Propose Fix"}
+          </button>
+        </div>
+      </div>
+
+      {/* Fix Plans list */}
+      <div>
+        <h4 style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 8 }}>Fix Plans</h4>
+        {fixPlans.length === 0 ? (
+          <EmptyText>No fix plans generated yet.</EmptyText>
+        ) : (
+          fixPlans.map((fp) => (
+            <div key={fp.id} style={{ padding: 10, marginBottom: 8, background: "#fff", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <Wand2 size={12} color="#7c3aed" />
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{fp.artifactType}: {fp.title}</span>
+              </div>
+              {fp.content && (
+                <pre style={{ fontSize: 11, color: "#475569", background: "#f8fafc", padding: 8, borderRadius: 4, overflow: "auto", maxHeight: 200, whiteSpace: "pre-wrap" }}>
+                  {typeof fp.content === "string" ? fp.content : JSON.stringify(fp.content, null, 2)}
+                </pre>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- GitHub Tab ---
+
+function GitHubTab({ integration, syncing, onSync }: {
+  integration: GitHubIntegration | null; syncing: boolean; onSync: () => void;
+}) {
+  if (!integration) {
+    return (
+      <div style={{ textAlign: "center", padding: 24, color: "#94a3b8" }}>
+        <Github size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
+        <p style={{ fontSize: 13 }}>No GitHub integration detected.</p>
+        <p style={{ fontSize: 11 }}>Ensure this repo has a GitHub remote and gh CLI is authenticated.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ padding: 16, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <Github size={16} />
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{integration.githubOwner}/{integration.githubRepo}</span>
+        </div>
+        {integration.defaultBranch && (
+          <div style={{ fontSize: 12, color: "#64748b" }}>Default branch: {integration.defaultBranch}</div>
+        )}
+        {integration.lastSyncedAt && (
+          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+            Last synced: {new Date(integration.lastSyncedAt).toLocaleString()}
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={onSync}
+        disabled={syncing}
+        style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
+          background: syncing ? "#94a3b8" : "#f1f5f9", color: "#475569",
+          border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600,
+        }}
+      >
+        <RefreshCw size={14} />
+        {syncing ? "Syncing..." : "Sync GitHub Data"}
+      </button>
+    </>
+  );
+}
+
+// --- Verify Tab ---
+
+function RiskBadge({ level }: { level: string }) {
+  const colors: Record<string, { bg: string; fg: string }> = {
+    high: { bg: "#fef2f2", fg: "#991b1b" },
+    medium: { bg: "#fef3c7", fg: "#92400e" },
+    low: { bg: "#dbeafe", fg: "#1e40af" },
+  };
+  const c = colors[level] ?? { bg: "#f1f5f9", fg: "#475569" };
+  return (
+    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg }}>
+      {level}
+    </span>
+  );
+}
+
+function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, onBatchRun }: {
+  commands: VerificationCommand[]; runningCmd: string | null;
+  result: VerificationResult | null; onRun: (cmd: VerificationCommand) => void;
+  runs: VerificationRun[]; batchRunning: boolean; onBatchRun: () => void;
+}) {
+  const automaticCommandCount = commands.filter(
+    (command) => command.riskLevel !== "high" && command.riskLevel !== "critical",
+  ).length;
+
+  return (
+    <>
+      {commands.length === 0 ? (
+        <p style={{ color: "#94a3b8", fontSize: 13 }}>No verification commands detected for this repository.</p>
+      ) : (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{commands.length} command(s) detected</span>
+            <button
+              onClick={onBatchRun}
+              disabled={batchRunning || automaticCommandCount === 0}
+              title="Runs only low- and medium-risk commands"
+              style={{
+                display: "flex", alignItems: "center", gap: 4, padding: "4px 10px",
+                background: "#eff6ff", color: "#1e40af", border: "1px solid #bfdbfe",
+                borderRadius: 4,
+                cursor: batchRunning || automaticCommandCount === 0 ? "not-allowed" : "pointer",
+                fontSize: 12,
+                opacity: batchRunning || automaticCommandCount === 0 ? 0.6 : 1,
+              }}
+            >
+              <Play size={12} />
+              {batchRunning ? "Running checks..." : `Run Approved (${automaticCommandCount})`}
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+            {commands.map((cmd) => {
+              const requiresApproval = cmd.riskLevel === "high" || cmd.riskLevel === "critical";
+              return (
+              <div key={cmd.command} style={{ padding: 10, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 12, fontFamily: "monospace" }}>{cmd.command}</div>
+                  <div style={{ fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 6 }}>
+                    {cmd.name} - {cmd.category}
+                    <RiskBadge level={cmd.riskLevel} />
+                  </div>
+                </div>
+                <button
+                  onClick={() => onRun(cmd)}
+                  disabled={runningCmd === cmd.command || requiresApproval}
+                  title={requiresApproval ? "Approval flow is not implemented yet" : `Run ${cmd.command}`}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 4, padding: "4px 10px",
+                    background: "#f0f9ff", color: "#0369a1", border: "1px solid #bae6fd",
+                    borderRadius: 4,
+                    cursor: runningCmd === cmd.command || requiresApproval ? "not-allowed" : "pointer",
+                    fontSize: 12,
+                    opacity: requiresApproval ? 0.55 : 1,
+                  }}
+                >
+                  <Play size={12} />
+                  {runningCmd === cmd.command ? "Running..." : requiresApproval ? "Approval required" : "Run"}
+                </button>
+              </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {result && (
+        <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ padding: "8px 12px", background: result.success ? "#f0fdf4" : "#fef2f2", display: "flex", alignItems: "center", gap: 6 }}>
+            {result.success ? <CheckCircle2 size={14} color="#166534" /> : <XCircle size={14} color="#991b1b" />}
+            <span style={{ fontWeight: 600, fontSize: 13, color: result.success ? "#166534" : "#991b1b" }}>
+              {result.success ? "Passed" : "Failed"} (exit {result.exitCode ?? "N/A"}, {result.durationMs}ms)
+            </span>
+          </div>
+          {result.stdout && (
+            <pre style={{ margin: 0, padding: 8, background: "#1e293b", color: "#e2e8f0", fontSize: 11, maxHeight: 100, overflow: "auto" }}>
+              {result.stdout.length > 500 ? result.stdout.slice(0, 500) + "..." : result.stdout}
+            </pre>
+          )}
+          {result.stderr && (
+            <pre style={{ margin: 0, padding: 8, background: "#1e293b", color: "#fca5a5", fontSize: 11, maxHeight: 80, overflow: "auto", borderTop: "1px solid #334155" }}>
+              {result.stderr.length > 500 ? result.stderr.slice(0, 500) + "..." : result.stderr}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {runs.length > 0 && (
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 6 }}>Previous Runs</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {runs.map((run) => (
+              <div key={run.id} style={{ padding: 8, background: "#f8fafc", borderRadius: 4, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {run.success ? <CheckCircle2 size={12} color="#166534" /> : <XCircle size={12} color="#991b1b" />}
+                  <span style={{ fontSize: 11, fontFamily: "monospace", fontWeight: 600 }}>{run.command}</span>
+                  <span style={{ fontSize: 10, color: "#94a3b8" }}>{run.category}</span>
+                  <RiskBadge level={run.riskLevel} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: "#94a3b8" }}>
+                  {run.exitCode != null && <span>exit {run.exitCode}</span>}
+                  <span>{run.durationMs}ms</span>
+                  {run.timedOut && <span style={{ color: "#92400e" }}>timeout</span>}
+                  <span>{new Date(run.createdAt).toLocaleString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// --- Patches Tab ---
+
+function PatchesTab({ patches, onApply, onReject, onRollback }: {
+  patches: PatchProposal[];
+  onApply: (id: string) => void;
+  onReject: (id: string) => void;
+  onRollback: (id: string) => void;
+}) {
+  if (patches.length === 0) {
+    return <p style={{ color: "#94a3b8", fontSize: 13 }}>No AI-generated patches for this repository.</p>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {patches.map((p) => (
+        <div key={p.id} style={{ padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>{p.description}</span>
+              <PatchStatusBadge status={p.status} />
+            </div>
+          </div>
+          <pre style={{ margin: 0, padding: 8, background: "#1e293b", color: "#e2e8f0", borderRadius: 4, fontSize: 11, maxHeight: 100, overflow: "auto" }}>
+            {p.patchContent.length > 400 ? p.patchContent.slice(0, 400) + "..." : p.patchContent}
+          </pre>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            {p.status === "proposed" && (
+              <>
+                <button onClick={() => onApply(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "#dcfce7", color: "#166534", border: "1px solid #bbf7d0", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
+                  <Check size={12} /> Apply
+                </button>
+                <button onClick={() => onReject(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "#fef2f2", color: "#991b1b", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
+                  <X size={12} /> Reject
+                </button>
+              </>
+            )}
+            {p.status === "applied" && (
+              <button onClick={() => onRollback(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
+                <RotateCcw size={12} /> Rollback
+              </button>
+            )}
+          </div>
+          {p.appliedAt && (
+            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+              Applied: {new Date(p.appliedAt).toLocaleString()}
+            </div>
+          )}
+          {p.status === "applied" && p.verificationResult && (
+            <div style={{ marginTop: 8, padding: 8, background: "#f0fdf4", borderRadius: 4, border: "1px solid #bbf7d0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
+                <CheckCircle2 size={12} color="#166534" />
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#166534" }}>Post-apply Verification</span>
+              </div>
+              <pre style={{ margin: 0, fontSize: 10, color: "#334155", whiteSpace: "pre-wrap" }}>
+                {p.verificationResult}
+              </pre>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// --- Shared Components ---
+
+function SortableHeader({ label, sortKey: key, currentKey, dir, onSort }: {
+  label: string; sortKey: SortKey; currentKey: SortKey; dir: SortDir; onSort: (k: SortKey) => void;
+}) {
+  const active = currentKey === key;
+  return (
+    <th
+      style={{ textAlign: "left", padding: "10px 12px", color: active ? "#3b82f6" : "#64748b", fontWeight: 600, cursor: "pointer", userSelect: "none" }}
+      onClick={() => onSort(key)}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+        {label}
+        <ArrowUpDown size={11} style={{ opacity: active ? 1 : 0.3, transform: active && dir === "desc" ? "scaleY(-1)" : "none" }} />
+      </div>
+    </th>
+  );
+}
+
+function ProfileSection({ icon: Icon, title, color, children }: { icon: any; title: string; color: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <Icon size={14} color={color} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{title}</span>
+      </div>
+      <div style={{ paddingLeft: 20 }}>{children}</div>
+    </div>
+  );
+}
+
+function Tag({ label, color }: { label: string; color: string }) {
+  return (
+    <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: color + "18", color, border: `1px solid ${color}33` }}>
+      {label}
+    </span>
+  );
+}
+
+function MiniBadge({ label, active }: { label: string; active: boolean }) {
+  return (
+    <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: active ? "#dcfce7" : "#f1f5f9", color: active ? "#166534" : "#94a3b8" }}>
+      {active ? `✓ ${label}` : `✗ ${label}`}
+    </span>
+  );
+}
+
+function SeverityBadge({ severity }: { severity: string }) {
+  const colors: Record<string, { bg: string; fg: string }> = {
+    critical: { bg: "#fef2f2", fg: "#991b1b" },
+    high: { bg: "#fef3c7", fg: "#92400e" },
+    medium: { bg: "#fef3c7", fg: "#92400e" },
+    low: { bg: "#dbeafe", fg: "#1e40af" },
+    info: { bg: "#f1f5f9", fg: "#475569" },
+  };
+  const c = colors[severity] ?? colors.info;
+  return (
+    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg }}>
+      {severity}
+    </span>
+  );
+}
+
+function PatchStatusBadge({ status }: { status: string }) {
+  const colors: Record<string, { bg: string; fg: string }> = {
+    proposed: { bg: "#dbeafe", fg: "#1e40af" },
+    applied: { bg: "#dcfce7", fg: "#166534" },
+    rejected: { bg: "#fef2f2", fg: "#991b1b" },
+    rolled_back: { bg: "#fef3c7", fg: "#92400e" },
+  };
+  const c = colors[status] ?? { bg: "#f1f5f9", fg: "#475569" };
+  return (
+    <span style={{ marginLeft: 8, padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg }}>
+      {status}
+    </span>
+  );
+}
+
+function EmptyText({ children }: { children: React.ReactNode }) {
+  return <p style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>{children}</p>;
+}
+
+function repoName(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}

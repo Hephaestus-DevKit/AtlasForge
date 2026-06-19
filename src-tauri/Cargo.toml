@@ -1,0 +1,33 @@
+[package]
+name = "atlasforge"
+version = "0.1.0"
+description = "Local-first AI engineering workbench"
+authors = ["AtlasForge"]
+edition = "2021"
+
+[lib]
+name = "atlasforge_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+glob = "0.3"
+walkdir = "2"
+thiserror = "1"
+log = "0.4"
+env_logger = "0.11"
+regex = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+tauri-plugin-dialog = "2.7.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+[dev-dependencies]
+tempfile = "3"
