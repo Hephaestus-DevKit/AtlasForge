@@ -22,7 +22,7 @@ AtlasForge 不是普通 todo 工具，也不是单仓库代码助手。它要成
 AtlasForge 目前处于开发阶段，尚未按正式产品发布。当前重点是打通真实能力、权限边界、数据一致性和验证链路。
 
 - 仅支持 Windows x64 平台。
-- GitHub 写操作默认关闭，需设置 `ATLASFORGE_ENABLE_GITHUB_WRITE=1` 环境变量才能启用。
+- GitHub 写操作保持关闭，直到拥有独立的变更预览和审批界面。
 - AI 功能需要自行配置 API Provider（支持 Ollama 和 OpenAI 兼容接口）。
 - 自动化当前只实现应用运行期间的定时通知。
 - 不支持 ARM64、云同步、多用户或后台服务模式。
@@ -116,11 +116,12 @@ AtlasForge 遵循以下安全原则：
 1. **前端不直接执行 Shell 或写文件**：所有写操作通过 Tauri IPC 经后端授权。
 2. **路径授权**：只能访问用户明确添加的工作区根目录下的文件。
 3. **只读模式**：工作区根目录可设为 read_only，阻止所有写操作。
-4. **GitHub 写操作默认关闭**：需环境变量 `ATLASFORGE_ENABLE_GITHUB_WRITE=1` 显式启用。
+4. **GitHub 写操作关闭**：不存在环境变量后门；必须先实现独立预览和一次性审批。
 5. **不持久化密钥**：AI Provider 的 API Key 通过环境变量引用（apiKeyRef），不存入数据库。
 6. **审计日志**：所有高风险操作（代码修改、GitHub 写入、AI 调用）记录审计事件。
-7. **补丁审批**：AI 生成的代码补丁必须经过用户确认才能应用。
-8. **回滚路径**：已应用补丁通过反向补丁回退；存在后续冲突时要求人工检查工作树。
+7. **补丁审批**：审批单次有效，并绑定仓库基线；仓库变化后旧审批失效。
+8. **隔离验证**：补丁先在临时 Git worktree 中应用和验证，再修改用户工作树。
+9. **回滚路径**：只有文件仍匹配应用后哈希时才允许反向补丁，并验证恢复后的基线哈希。
 
 ## 规划文档
 
@@ -136,6 +137,8 @@ AtlasForge 遵循以下安全原则：
 - [验证、质量门与验收标准](docs/09-validation-and-quality-gates.md)
 - [交给 AI 执行的提示词](docs/10-ai-execution-prompts.md)
 - [Alpha 产品化执行计划](docs/12-alpha-productization-plan.md)
+- [当前能力矩阵](docs/13-capability-matrix.md)
+- [可信本地执行 ADR](docs/14-adr-trusted-execution.md)
 
 ## 第一性原则
 

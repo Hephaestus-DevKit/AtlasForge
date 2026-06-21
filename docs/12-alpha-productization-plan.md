@@ -73,7 +73,7 @@ These can be planned later once the alpha loop is working.
 - Do not write real secrets into files, docs, fixtures, tests, logs, or screenshots.
 - Do not let frontend code directly execute shell, mutate files, or call GitHub write operations.
 - All write-like operations must go through backend commands, path authorization, risk labeling, and audit records.
-- Keep GitHub write commands blocked by `ATLASFORGE_ENABLE_GITHUB_WRITE=1` until permission review is implemented.
+- Keep GitHub write commands unconditionally blocked until each operation has a dedicated preview and single-use approval flow.
 - Keep x64 as the build target unless the user explicitly resumes ARM64 work.
 - Prefer small, reviewable packages with focused tests.
 - Update docs when behavior changes.
@@ -393,7 +393,7 @@ Phase B: write integration, still gated.
 
 Tasks:
 
-- Keep `ATLASFORGE_ENABLE_GITHUB_WRITE=1` gate.
+- Do not add an environment-variable bypass for GitHub writes.
 - Add permission review UI before create PR, rerun workflow, create release.
 - Show owner/repo, branch, tag, title, body, and risk before executing.
 - Use dry-run preview first.
@@ -615,7 +615,7 @@ Execution rules:
 3. Preserve the safety model:
    - frontend must not execute shell or mutate files directly;
    - path writes must go through backend authorization;
-   - GitHub writes remain gated by ATLASFORGE_ENABLE_GITHUB_WRITE=1;
+   - GitHub writes remain disabled until dedicated previews and approvals exist;
    - never persist raw API keys or secrets.
 4. Add or update tests for each behavior change.
 5. Update docs when behavior or validation commands change.
@@ -641,4 +641,3 @@ Report back with:
 - residual warnings/risks;
 - anything that needs human review.
 ```
-

@@ -125,11 +125,12 @@ pub fn update_rule(rule: &AutomationRule, db: &Db) -> Result<(), String> {
 /// Delete an automation rule.
 pub fn delete_rule(id: &str, db: &Db) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    let deleted = conn.execute(
-        "DELETE FROM automation_rule WHERE id = ?1",
-        rusqlite::params![id],
-    )
-    .map_err(|e| e.to_string())?;
+    let deleted = conn
+        .execute(
+            "DELETE FROM automation_rule WHERE id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| e.to_string())?;
     if deleted == 0 {
         return Err(format!("Automation rule not found: {}", id));
     }
@@ -288,9 +289,7 @@ pub fn tick_scheduler(db: &Db) -> Result<Vec<String>, String> {
             let still_due = current_last
                 .as_deref()
                 .and_then(|last| chrono::DateTime::parse_from_rfc3339(last).ok())
-                .map(|last| {
-                    now.signed_duration_since(last).num_minutes() >= interval_mins as i64
-                })
+                .map(|last| now.signed_duration_since(last).num_minutes() >= interval_mins as i64)
                 .unwrap_or(true);
             if !still_due {
                 continue;

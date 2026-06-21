@@ -41,6 +41,13 @@ export interface Repository {
   lastCommitAt: string | null;
 }
 
+export interface RepositorySummary {
+  repository: Repository;
+  profile: RepoProfile | null;
+  healthScore: number | null;
+  lastVerificationSuccess: boolean | null;
+}
+
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
 export interface Job {
@@ -101,6 +108,17 @@ export interface JobEvent {
   seq: number;
   type: string;
   payload: string;
+  createdAt: string;
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  subject: string;
+  scope: string;
+  capability: string;
+  riskLevel: string;
+  detail: string;
   createdAt: string;
 }
 
@@ -169,6 +187,8 @@ export interface SearchResult {
 export interface IndexStats {
   documents: number;
   chunks: number;
+  indexedDocuments: number;
+  skippedDocuments: number;
   errors: string[];
 }
 
@@ -179,6 +199,19 @@ export interface IndexedDocument {
   language: string | null;
   sizeBytes: number;
   indexedAt: string;
+}
+
+export interface ToolInvocation {
+  id: string;
+  toolName: string;
+  input: string;
+  output: string | null;
+  status: string;
+  riskLevel: string;
+  permissionDecision: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
 }
 
 // --- Auditor types (matches Rust auditor structs) ---
@@ -244,6 +277,13 @@ export interface AiResponse {
   finishReason: string | null;
 }
 
+export interface ProviderProbe {
+  reachable: boolean;
+  message: string;
+  latencyMs: number;
+  models: string[];
+}
+
 // --- AI Fix types (matches Rust ai_fix structs) ---
 
 export interface Artifact {
@@ -253,7 +293,7 @@ export interface Artifact {
   title: string;
   content: string;
   filePath: string | null;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 export interface FixPlan {
@@ -362,6 +402,19 @@ export interface GitHubWorkflowRun {
   url: string | null;
 }
 
+export interface GitHubEvidence {
+  workflowRuns: GitHubWorkflowRun[];
+  pullRequests: GitHubPR[];
+  releases: GitHubRelease[];
+  syncErrors: string[];
+}
+
+export interface GitHubSyncResult {
+  workflows: number;
+  prs: number;
+  releases: number;
+}
+
 // --- Verification types (matches Rust verification structs) ---
 
 export interface VerificationCommand {
@@ -370,6 +423,25 @@ export interface VerificationCommand {
   timeoutSecs: number;
   category: string;
   riskLevel: string;
+  requiresApproval: boolean;
+  expandedCommand: string;
+  riskExplanation: string;
+}
+
+export interface PermissionRequest {
+  id: string;
+  jobId: string | null;
+  repoId: string | null;
+  capability: string;
+  scope: string;
+  riskLevel: string;
+  command: string | null;
+  contextHash: string;
+  details: Record<string, unknown>;
+  status: "pending" | "approved" | "denied" | "consumed" | "expired";
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
 }
 
 export interface VerificationResult {

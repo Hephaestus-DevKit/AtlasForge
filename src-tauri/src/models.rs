@@ -46,6 +46,15 @@ pub struct Repository {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RepositorySummary {
+    pub repository: Repository,
+    pub profile: Option<RepoProfile>,
+    pub health_score: Option<i32>,
+    pub last_verification_success: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AheadBehind {
     pub ahead: i64,
     pub behind: i64,
@@ -77,6 +86,19 @@ pub struct JobEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     pub payload: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditEntry {
+    pub id: String,
+    pub action: String,
+    pub subject: String,
+    pub scope: String,
+    pub capability: String,
+    pub risk_level: String,
+    pub detail: String,
     pub created_at: String,
 }
 

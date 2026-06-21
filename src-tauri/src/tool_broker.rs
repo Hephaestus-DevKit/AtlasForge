@@ -92,9 +92,7 @@ pub fn check_permission(
             || tool_name.contains("commit")
             || tool_name.contains("mutate")
         {
-            if let Err(e) = crate::security::authorize_write(path, roots) {
-                return Err(e);
-            }
+            crate::security::authorize_write(path, roots)?;
         }
     }
 
@@ -526,53 +524,6 @@ fn load_workspace_roots(db: &Db) -> Result<Vec<WorkspaceRoot>, String> {
     Ok(roots)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    fn root_for(path: &Path) -> WorkspaceRoot {
-        WorkspaceRoot {
-            id: "root".into(),
-            path: path.to_string_lossy().into_owned(),
-            label: "Root".into(),
-            access_mode: "read_write".into(),
-            scan_enabled: true,
-            include_globs: vec![],
-            exclude_globs: vec![],
-            created_at: String::new(),
-            last_scanned_at: None,
-        }
-    }
-
-    #[test]
-    fn path_based_tools_require_explicit_authorized_path() {
-        assert!(check_permission(
-            "git.status",
-            &serde_json::json!({}),
-            &[],
-            "assisted"
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn assisted_policy_blocks_medium_shell_execution_without_approval() {
-        let temp = tempfile::tempdir().unwrap();
-        fs::write(
-            temp.path().join("package.json"),
-            r#"{"scripts":{"test":"vitest"}}"#,
-        )
-        .unwrap();
-        let roots = vec![root_for(temp.path())];
-        let input = serde_json::json!({
-            "cwd": temp.path().to_string_lossy(),
-            "command": "npm test",
-        });
-        assert!(check_permission("shell.verify", &input, &roots, "assisted").is_err());
-    }
-}
-
 fn write_audit_log(
     db: &Db,
     action: &str,
@@ -597,4 +548,45 @@ fn write_audit_log(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn root_for(path: &Path) -> WorkspaceRoot {
+        WorkspaceRoot {
+            id: "root".into(),
+            path: path.to_string_lossy().into_owned(),
+            label: "Root".into(),
+            access_mode: "read_write".into(),
+            scan_enabled: true,
+            include_globs: vec![],
+            exclude_globs: vec![],
+            created_at: String::new(),
+            last_scanned_at: None,
+        }
+    }
+
+    #[test]
+    fn path_based_tools_require_explicit_authorized_path() {
+        assert!(check_permission("git.status", &serde_json::json!({}), &[], "assisted").is_err());
+    }
+
+    #[test]
+    fn assisted_policy_blocks_medium_shell_execution_without_approval() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts":{"test":"vitest"}}"#,
+        )
+        .unwrap();
+        let roots = vec![root_for(temp.path())];
+        let input = serde_json::json!({
+            "cwd": temp.path().to_string_lossy(),
+            "command": "npm test",
+        });
+        assert!(check_permission("shell.verify", &input, &roots, "assisted").is_err());
+    }
 }

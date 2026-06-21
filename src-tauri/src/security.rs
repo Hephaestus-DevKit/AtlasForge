@@ -179,7 +179,7 @@ mod tests {
         fs::create_dir_all(&sibling_path).unwrap();
         let root = test_root(&root_path, "read_write");
 
-        assert!(authorize_path(&root_path, &[root.clone()]).is_some());
+        assert!(authorize_path(&root_path, std::slice::from_ref(&root)).is_some());
         assert!(authorize_path(&sibling_path, &[root]).is_none());
     }
 

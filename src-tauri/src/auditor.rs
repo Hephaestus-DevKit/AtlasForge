@@ -5,13 +5,12 @@ use std::path::Path;
 
 /// Check whether a repo has no remote origin (local-only).
 fn is_local_repo(path: &Path) -> bool {
-    std::process::Command::new("git")
-        .args(&["remote", "get-url", "origin"])
+    !std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
         .current_dir(path)
         .output()
         .map(|o| o.status.success())
-        .unwrap_or(true) // If git fails entirely, treat as local
-        == false
+        .unwrap_or(true)
 }
 
 /// Run a health audit on a repository.
@@ -158,7 +157,7 @@ fn check_runnable(path: &Path, profile: &Option<RepoProfile>) -> CategoryScore {
 
     // Check for build/run scripts
     if let Some(p) = profile {
-        let has_run_script = p.scripts.as_object().map_or(false, |obj| {
+        let has_run_script = p.scripts.as_object().is_some_and(|obj| {
             obj.keys()
                 .any(|k| k == "start" || k == "dev" || k == "build" || k == "run")
         });
@@ -182,23 +181,22 @@ fn check_runnable(path: &Path, profile: &Option<RepoProfile>) -> CategoryScore {
         }
 
         // Check for Cargo.toml with missing main
-        if p.languages.contains(&"Rust".to_string()) {
-            if !path.join("src").join("main.rs").exists()
-                && !path.join("src").join("lib.rs").exists()
-            {
-                score -= 20;
-                findings.push(Finding {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    category: "runnable".into(),
-                    severity: "warning".into(),
-                    title: "Rust project missing main.rs or lib.rs".into(),
-                    description: "Standard Rust entry point not found.".into(),
-                    evidence: "No src/main.rs or src/lib.rs".into(),
-                    file_path: Some("src/".into()),
-                    suggested_fix: Some("Create src/main.rs or src/lib.rs.".into()),
-                    auto_fixable: false,
-                });
-            }
+        if p.languages.contains(&"Rust".to_string())
+            && !path.join("src").join("main.rs").exists()
+            && !path.join("src").join("lib.rs").exists()
+        {
+            score -= 20;
+            findings.push(Finding {
+                id: uuid::Uuid::new_v4().to_string(),
+                category: "runnable".into(),
+                severity: "warning".into(),
+                title: "Rust project missing main.rs or lib.rs".into(),
+                description: "Standard Rust entry point not found.".into(),
+                evidence: "No src/main.rs or src/lib.rs".into(),
+                file_path: Some("src/".into()),
+                suggested_fix: Some("Create src/main.rs or src/lib.rs.".into()),
+                auto_fixable: false,
+            });
         }
     } else {
         score -= 40;
@@ -247,7 +245,7 @@ fn check_tests(path: &Path, profile: &Option<RepoProfile>) -> CategoryScore {
         let has_test_script = p
             .scripts
             .as_object()
-            .map_or(false, |obj| obj.keys().any(|k| k.contains("test")));
+            .is_some_and(|obj| obj.keys().any(|k| k.contains("test")));
         if has_test_script {
             score = 70;
         } else {
@@ -555,6 +553,91 @@ fn check_security(path: &Path, profile: &Option<RepoProfile>) -> CategoryScore {
         }
     }
 
+    let workflow_dir = path.join(".github").join("workflows");
+    if workflow_dir.is_dir() {
+        let sha_ref = regex::Regex::new(r"^[0-9a-fA-F]{40}$").expect("valid SHA regex");
+        for entry in walkdir::WalkDir::new(&workflow_dir)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+        {
+            let workflow_path = entry.path();
+            let extension = workflow_path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default();
+            if extension != "yml" && extension != "yaml" {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(workflow_path) else {
+                continue;
+            };
+            let relative = workflow_path
+                .strip_prefix(path)
+                .unwrap_or(workflow_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !content
+                .lines()
+                .any(|line| line.trim_start().starts_with("permissions:"))
+            {
+                score -= 5;
+                findings.push(Finding {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    category: "security".into(),
+                    severity: "warning".into(),
+                    title: "GitHub Actions permissions are implicit".into(),
+                    description:
+                        "The workflow does not declare a permissions block, so token access depends on repository defaults."
+                            .into(),
+                    evidence: format!("No permissions declaration in {}", relative),
+                    file_path: Some(relative.clone()),
+                    suggested_fix: Some(
+                        "Declare the minimum required top-level or job-level permissions.".into(),
+                    ),
+                    auto_fixable: false,
+                });
+            }
+            for (line_number, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                let Some(reference) = trimmed
+                    .strip_prefix("uses:")
+                    .or_else(|| trimmed.strip_prefix("- uses:"))
+                else {
+                    continue;
+                };
+                let reference = reference.trim().trim_matches('"').trim_matches('\'');
+                if reference.starts_with("./") || reference.starts_with("docker://") {
+                    continue;
+                }
+                let pinned = reference
+                    .rsplit_once('@')
+                    .map(|(_, revision)| sha_ref.is_match(revision))
+                    .unwrap_or(false);
+                if !pinned {
+                    score -= 5;
+                    findings.push(Finding {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        category: "security".into(),
+                        severity: "warning".into(),
+                        title: "GitHub Action is not pinned to an immutable commit".into(),
+                        description:
+                            "Tags and branches can move. Third-party Actions should be pinned to a full commit SHA."
+                                .into(),
+                        evidence: format!("{}:{} uses {}", relative, line_number + 1, reference),
+                        file_path: Some(relative.clone()),
+                        suggested_fix: Some(
+                            "Replace the tag or branch with the verified 40-character commit SHA and retain the version in a comment."
+                                .into(),
+                        ),
+                        auto_fixable: false,
+                    });
+                }
+            }
+        }
+    }
+
     CategoryScore {
         score: score.max(0),
         max_score: 100,
@@ -594,7 +677,7 @@ fn check_release(path: &Path, _profile: &Option<RepoProfile>, local_only: bool) 
 
     // Check for tags
     let has_tags = std::process::Command::new("git")
-        .args(&["tag"])
+        .args(["tag"])
         .current_dir(path)
         .output()
         .map(|o| !o.stdout.is_empty())
@@ -618,7 +701,7 @@ fn check_git_hygiene(path: &Path) -> CategoryScore {
 
     // Check for large files in git
     let is_dirty = std::process::Command::new("git")
-        .args(&["status", "--porcelain"])
+        .args(["status", "--porcelain"])
         .current_dir(path)
         .output()
         .map(|o| !o.stdout.is_empty())
@@ -641,7 +724,7 @@ fn check_git_hygiene(path: &Path) -> CategoryScore {
 
     // Check for stashes
     let stash_count = std::process::Command::new("git")
-        .args(&["stash", "list"])
+        .args(["stash", "list"])
         .current_dir(path)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
@@ -840,11 +923,7 @@ pub fn load_latest_snapshot(repo_id: &str, db: &Db) -> Result<Option<HealthSnaps
 }
 
 /// Load a specific health snapshot and verify repository ownership.
-pub fn load_snapshot(
-    snapshot_id: &str,
-    repo_id: &str,
-    db: &Db,
-) -> Result<HealthSnapshot, String> {
+pub fn load_snapshot(snapshot_id: &str, repo_id: &str, db: &Db) -> Result<HealthSnapshot, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.query_row(
         "SELECT id, repo_id, scan_id, score, category_scores, recommended_tasks, created_at
@@ -1115,5 +1194,45 @@ mod tests {
         let short_finding = result.findings.iter().find(|f| f.title.contains("short"));
         assert!(short_finding.is_some());
         assert!(result.score < 80);
+    }
+
+    #[test]
+    fn security_benchmark_flags_mutable_actions_and_implicit_permissions() {
+        let dir = make_project(
+            "unsafe-workflow",
+            &[(
+                ".github/workflows/ci.yml",
+                "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n",
+            )],
+        );
+        let result = check_security(dir.path(), &None);
+        assert!(result
+            .findings
+            .iter()
+            .any(|finding| finding.title.contains("immutable commit")));
+        assert!(result
+            .findings
+            .iter()
+            .any(|finding| finding.title.contains("permissions")));
+    }
+
+    #[test]
+    fn security_benchmark_accepts_pinned_minimal_workflow() {
+        let dir = make_project(
+            "safe-workflow",
+            &[(
+                ".github/workflows/ci.yml",
+                "name: CI\non: push\npermissions:\n  contents: read\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n",
+            )],
+        );
+        let result = check_security(dir.path(), &None);
+        assert!(!result
+            .findings
+            .iter()
+            .any(|finding| finding.title.contains("immutable commit")));
+        assert!(!result
+            .findings
+            .iter()
+            .any(|finding| finding.title.contains("permissions")));
     }
 }

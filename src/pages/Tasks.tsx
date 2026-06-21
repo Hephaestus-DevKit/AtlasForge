@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { listJobs, getJobEvents, cancelJob, retryJob, listArtifacts } from "../api/ipc";
-import type { Job, JobEvent, Artifact } from "../types";
-import { ListTodo, ChevronDown, ChevronRight, XCircle, RotateCcw, Package, Clock, AlertTriangle, CheckCircle2, Loader2, Ban } from "lucide-react";
+import { listJobs, getJobEvents, cancelJob, retryJob, listArtifacts, listAuditLog } from "../api/ipc";
+import type { Job, JobEvent, Artifact, AuditEntry } from "../types";
+import { ListTodo, ChevronDown, ChevronRight, XCircle, RotateCcw, Package, Clock, AlertTriangle, CheckCircle2, Loader2, Ban, ShieldCheck } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
 
 /** Parse a JSON payload string safely. */
@@ -169,15 +169,23 @@ export function Tasks() {
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
 
   useEffect(() => {
     loadJobs();
+    const interval = window.setInterval(loadJobs, 2000);
+    return () => window.clearInterval(interval);
   }, []);
 
   async function loadJobs() {
     try {
       setError(null);
-      setJobs(await listJobs(100));
+      const [jobList, auditLog] = await Promise.all([
+        listJobs(100),
+        listAuditLog(30),
+      ]);
+      setJobs(jobList);
+      setAuditEntries(auditLog);
     } catch (e: any) {
       setError(e?.toString() ?? "Failed to load jobs");
     }
@@ -298,7 +306,7 @@ export function Tasks() {
                     )}
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
-                    {job.status === "running" && (
+                    {(job.status === "running" || job.status === "pending") && (
                       <button
                         onClick={(e) => { e.stopPropagation(); handleCancel(job.id); }}
                         style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", background: "#fef2f2", color: "#991b1b", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer", fontSize: 12 }}
@@ -400,6 +408,52 @@ export function Tasks() {
           })}
         </div>
       )}
+
+      <section style={{ marginTop: 24 }}>
+        <h2 style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontSize: 15 }}>
+          <ShieldCheck size={16} color="#0f766e" />
+          Security activity
+        </h2>
+        {auditEntries.length === 0 ? (
+          <p style={{ fontSize: 12, color: "#94a3b8" }}>No audit activity recorded.</p>
+        ) : (
+          <div style={{ borderTop: "1px solid #e2e8f0", overflowX: "auto" }}>
+            {auditEntries.map((entry) => (
+              <div
+                key={entry.id}
+                style={{
+                  minWidth: 620,
+                  display: "grid",
+                  gridTemplateColumns: "minmax(150px, 1fr) minmax(120px, 180px) 80px 150px",
+                  gap: 10,
+                  alignItems: "center",
+                  padding: "8px 0",
+                  borderBottom: "1px solid #e2e8f0",
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600, color: "#334155" }}>
+                    {entry.action}
+                  </div>
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#94a3b8" }}>
+                    {entry.subject}
+                  </div>
+                </div>
+                <code style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>
+                  {entry.capability}
+                </code>
+                <span style={{ color: entry.riskLevel === "high" || entry.riskLevel === "critical" ? "#991b1b" : "#64748b", fontWeight: 600 }}>
+                  {entry.riskLevel}
+                </span>
+                <span style={{ textAlign: "right", color: "#94a3b8" }}>
+                  {new Date(entry.createdAt).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

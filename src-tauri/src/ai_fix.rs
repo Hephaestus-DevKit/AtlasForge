@@ -135,73 +135,131 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
     }
     drop(conn);
 
-    // Apply the patch using git apply
     let repo_path = get_repo_worktree_path(&proposal.repo_id, db)?;
     ensure_repo_write_allowed(&proposal.repo_id, db)?;
-    validate_patch_paths(&proposal.patch_content, None)?;
-    match run_git_apply(&repo_path, &proposal.patch_content, &["--check"]) {
-        Ok(()) => {
-            // Actually apply
-            let apply_result = run_git_apply(&repo_path, &proposal.patch_content, &[]);
-            match apply_result {
-                Ok(()) => {
-                    let now = chrono::Utc::now().to_rfc3339();
-
-                    // Run post-apply verification
-                    let verification_json =
-                        run_post_apply_verification(&proposal.repo_id, &repo_path, db);
-
-                    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-                    conn.execute(
-                        "UPDATE patch_proposal SET status = 'applied', applied_at = ?1, verification_result = ?2 WHERE id = ?3",
-                        rusqlite::params![now, verification_json, proposal_id],
-                    )
-                    .map_err(|e| e.to_string())?;
-                    drop(conn);
-
-                    write_audit_log(
-                        db,
-                        "patch_applied",
-                        &format!("repo:{}", proposal.repo_id),
-                        "fs.write_patch",
-                        "high",
-                        &serde_json::json!({
-                            "proposal_id": proposal_id,
-                            "file_path": proposal.file_path,
-                            "verification_passed": verification_json.as_ref().and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok()).and_then(|v| v.get("allPassed").and_then(|p| p.as_bool())).unwrap_or(false),
-                        }).to_string(),
-                    )?;
-
-                    let mut applied = proposal.clone();
-                    applied.status = "applied".to_string();
-                    applied.applied_at = Some(now);
-                    applied.verification_result = verification_json;
-                    Ok(applied)
-                }
-                Err(e) => {
-                    let conn = db.conn.lock().map_err(|lock_err| lock_err.to_string())?;
-                    conn.execute(
-                        "UPDATE patch_proposal SET status = 'conflict' WHERE id = ?1",
-                        rusqlite::params![proposal_id],
-                    )
-                    .ok();
-                    Err(format!("Patch apply failed: {}", e))
-                }
-            }
-        }
-        Err(e) => {
-            let conn = db.conn.lock().map_err(|lock_err| lock_err.to_string())?;
-            conn.execute(
-                "UPDATE patch_proposal SET status = 'conflict' WHERE id = ?1",
-                rusqlite::params![proposal_id],
-            )
-            .ok();
-            Err(format!(
-                "Patch has conflicts and cannot be applied cleanly: {}",
-                e
-            ))
-        }
+    let patch_path = validate_patch_paths(&proposal.patch_content, None)?;
+    if patch_path != proposal.file_path.replace('\\', "/") {
+        return Err("Patch metadata does not match the patch target file".into());
     }
+    let target_path = resolve_existing_repo_file(&repo_path, &patch_path)?;
+
+    let base_head = run_git_output(&repo_path, &["rev-parse", "HEAD"])?;
+    let status = run_git_output(&repo_path, &["status", "--porcelain"])?;
+    if !status.is_empty() {
+        return Err(
+            "Patch application requires a clean working tree. Commit, stash, or move existing changes first."
+                .into(),
+        );
+    }
+    let base_file_hash = crate::permissions::hash_text_file(&target_path)?;
+    let approval_context_hash = crate::permissions::hash_text(&format!(
+        "{}\n{}\n{}\n{}",
+        repo_path,
+        base_head,
+        status,
+        crate::permissions::hash_text(&proposal.patch_content)
+    ));
+
+    let sandbox = std::env::temp_dir().join(format!("atlasforge-patch-{}", uuid::Uuid::new_v4()));
+    let sandbox_path = sandbox.to_string_lossy().to_string();
+    run_git(
+        &repo_path,
+        &["worktree", "add", "--detach", &sandbox_path, &base_head],
+    )
+    .map_err(|error| format!("Cannot create isolated patch worktree: {}", error))?;
+
+    let isolated_result = (|| -> Result<Option<String>, String> {
+        link_dependency_cache(&repo_path, &sandbox_path)?;
+        run_git_apply(&sandbox_path, &proposal.patch_content, &["--check"])?;
+        run_git_apply(&sandbox_path, &proposal.patch_content, &[])?;
+        let verification = run_post_apply_verification(&proposal.repo_id, &sandbox_path, db);
+        if verification
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+            .and_then(|value| value.get("allPassed").and_then(|passed| passed.as_bool()))
+            == Some(false)
+        {
+            return Err("Patch verification failed in the isolated worktree; the user worktree was not modified".into());
+        }
+        Ok(verification)
+    })();
+    let cleanup_result = run_git(
+        &repo_path,
+        &["worktree", "remove", "--force", &sandbox_path],
+    );
+    let _ = std::fs::remove_dir_all(&sandbox);
+    if let Err(error) = cleanup_result {
+        log::warn!(
+            "Failed to remove patch worktree '{}': {}",
+            sandbox_path,
+            error
+        );
+    }
+    let verification_json = isolated_result?;
+
+    let current_head = run_git_output(&repo_path, &["rev-parse", "HEAD"])?;
+    let current_status = run_git_output(&repo_path, &["status", "--porcelain"])?;
+    let current_file_hash = crate::permissions::hash_text_file(&target_path)?;
+    if current_head != base_head
+        || !current_status.is_empty()
+        || current_file_hash != base_file_hash
+    {
+        return Err(
+            "Repository changed after approval. Request a new approval against the current baseline."
+                .into(),
+        );
+    }
+
+    run_git_apply(&repo_path, &proposal.patch_content, &["--check"])
+        .map_err(|error| format!("Patch no longer applies cleanly: {}", error))?;
+    run_git_apply(&repo_path, &proposal.patch_content, &[])
+        .map_err(|error| format!("Patch apply failed: {}", error))?;
+    let applied_file_hash = crate::permissions::hash_text_file(&target_path)?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE patch_proposal
+         SET status = 'applied', applied_at = ?1, verification_result = ?2,
+             base_head_sha = ?3, base_file_hash = ?4, applied_file_hash = ?5,
+             backup_content = ?6, approval_context_hash = ?7
+         WHERE id = ?8",
+        rusqlite::params![
+            now,
+            verification_json,
+            base_head,
+            base_file_hash,
+            applied_file_hash,
+            Option::<String>::None,
+            approval_context_hash,
+            proposal_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    drop(conn);
+
+    write_audit_log(
+        db,
+        "patch_applied",
+        &format!("repo:{}", proposal.repo_id),
+        "fs.write_patch",
+        "high",
+        &serde_json::json!({
+            "proposalId": proposal_id,
+            "filePath": proposal.file_path,
+            "baseHead": base_head,
+            "baseFileHash": base_file_hash,
+            "appliedFileHash": applied_file_hash,
+            "isolatedVerification": verification_json.is_some(),
+        })
+        .to_string(),
+    )?;
+
+    let mut applied = proposal;
+    applied.status = "applied".into();
+    applied.applied_at = Some(now);
+    applied.verification_result = verification_json;
+    Ok(applied)
 }
 
 /// Reject a patch proposal.
@@ -230,45 +288,75 @@ pub fn reject_patch(proposal_id: &str, reason: &str, db: &Db) -> Result<(), Stri
 pub fn rollback_patch(proposal_id: &str, db: &Db) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    let (repo_id, patch_content): (String, String) = conn.query_row(
-        "SELECT repo_id, patch_content FROM patch_proposal WHERE id = ?1 AND status = 'applied'",
-        rusqlite::params![proposal_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )
-    .map_err(|e| format!("Cannot rollback: {}", e))?;
+    let (repo_id, file_path, patch_content, base_file_hash, applied_file_hash): (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT repo_id, file_path, patch_content, base_file_hash, applied_file_hash
+         FROM patch_proposal WHERE id = ?1 AND status = 'applied'",
+            rusqlite::params![proposal_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .map_err(|e| format!("Cannot rollback: {}", e))?;
     drop(conn);
 
     let repo_path = get_repo_worktree_path(&repo_id, db)?;
     ensure_repo_write_allowed(&repo_id, db)?;
-    validate_patch_paths(&patch_content, None)?;
-
-    // Reverse apply using git apply -R. Do not try to manually invert patch text.
-    match run_git_apply(&repo_path, &patch_content, &["-R"]) {
-        Ok(()) => {
-            let now = chrono::Utc::now().to_rfc3339();
-            let conn = db.conn.lock().map_err(|e| e.to_string())?;
-            conn.execute(
-                "UPDATE patch_proposal SET status = 'rolled_back', rolled_back_at = ?1 WHERE id = ?2",
-                rusqlite::params![now, proposal_id],
-            )
-            .map_err(|e| e.to_string())?;
-            drop(conn);
-
-            write_audit_log(
-                db,
-                "patch_rolled_back",
-                &format!("repo:{}", repo_id),
-                "fs.write_patch",
-                "high",
-                &serde_json::json!({ "proposal_id": proposal_id }).to_string(),
-            )?;
-            Ok(())
-        }
-        Err(e) => Err(format!(
-            "Rollback failed: {}. Review the working tree and revert the affected files manually.",
-            e
-        )),
+    let expected_applied_hash = applied_file_hash
+        .ok_or_else(|| "Applied file hash is missing; automatic rollback is unsafe".to_string())?;
+    let expected_base_hash = base_file_hash
+        .ok_or_else(|| "Base file hash is missing; automatic rollback is unsafe".to_string())?;
+    let target_path = resolve_existing_repo_file(&repo_path, &file_path)?;
+    let current_hash = crate::permissions::hash_text_file(&target_path)?;
+    if current_hash != expected_applied_hash {
+        return Err(
+            "The patched file changed after application. Automatic rollback was refused to preserve newer work."
+                .into(),
+        );
     }
+    validate_patch_paths(&patch_content, Some(&file_path))?;
+    run_git_apply(&repo_path, &patch_content, &["--check", "-R"])
+        .map_err(|error| format!("Rollback validation failed: {}", error))?;
+    run_git_apply(&repo_path, &patch_content, &["-R"])
+        .map_err(|error| format!("Rollback failed: {}", error))?;
+    let restored_hash = crate::permissions::hash_text_file(&target_path)?;
+    if restored_hash != expected_base_hash {
+        return Err("Rollback integrity check failed after restoring the backup".into());
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE patch_proposal SET status = 'rolled_back', rolled_back_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, proposal_id],
+    )
+    .map_err(|e| e.to_string())?;
+    drop(conn);
+    write_audit_log(
+        db,
+        "patch_rolled_back",
+        &format!("repo:{}", repo_id),
+        "fs.write_patch",
+        "high",
+        &serde_json::json!({
+            "proposalId": proposal_id,
+            "filePath": file_path,
+            "restoredHash": restored_hash,
+        })
+        .to_string(),
+    )
 }
 
 /// List patch proposals for a repo.
@@ -330,6 +418,60 @@ fn run_git_apply(repo_path: &str, patch_content: &str, args: &[&str]) -> Result<
         ));
     }
 
+    Ok(())
+}
+
+fn run_git(repo_path: &str, args: &[&str]) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|error| format!("Failed to run git: {}", error))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+fn run_git_output(repo_path: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|error| format!("Failed to run git: {}", error))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn link_dependency_cache(repo_path: &str, sandbox_path: &str) -> Result<(), String> {
+    let source = Path::new(repo_path).join("node_modules");
+    let destination = Path::new(sandbox_path).join("node_modules");
+    if !source.is_dir() || destination.exists() {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &destination.to_string_lossy(),
+                &source.to_string_lossy(),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .status()
+            .map_err(|error| format!("Cannot link dependency cache: {}", error))?;
+        if !status.success() {
+            return Err("Cannot create isolated node_modules junction".into());
+        }
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(&source, &destination)
+        .map_err(|error| format!("Cannot link dependency cache: {}", error))?;
     Ok(())
 }
 
@@ -538,6 +680,24 @@ pub struct FixPlan {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixPlanDocument {
+    summary: String,
+    items: Vec<FixPlanItem>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixPlanItem {
+    priority: String,
+    title: String,
+    rationale: String,
+    steps: Vec<String>,
+    verification: Vec<String>,
+    affected_files: Vec<String>,
+}
+
 /// Preview the context that would be sent to AI for a fix plan, without actually calling AI.
 /// Returns the ContextPack summary and the redacted prompt preview.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -632,9 +792,11 @@ pub fn preview_fix_plan_context(
         .with_system_prompt(
             "You are an expert software engineer reviewing repository health findings. \
              Analyze the findings and generate a prioritized fix plan. \
-             For each finding, suggest concrete steps to resolve it. \
-             Order by severity (critical > error > warning > info). \
-             Format as a clear numbered list with action items.",
+             Return JSON only with this shape: \
+             {\"summary\":\"...\",\"items\":[{\"priority\":\"critical|high|medium|low\",\
+             \"title\":\"...\",\"rationale\":\"...\",\"steps\":[\"...\"],\
+             \"verification\":[\"...\"],\"affectedFiles\":[\"...\"]}]}. \
+             Order items by severity and include only concrete, verifiable work.",
         )
         .add_section(
             "Repository Health Score",
@@ -769,9 +931,11 @@ pub async fn generate_fix_plan(
         .with_system_prompt(
             "You are an expert software engineer reviewing repository health findings. \
              Analyze the findings and generate a prioritized fix plan. \
-             For each finding, suggest concrete steps to resolve it. \
-             Order by severity (critical > error > warning > info). \
-             Format as a clear numbered list with action items.",
+             Return JSON only with this shape: \
+             {\"summary\":\"...\",\"items\":[{\"priority\":\"critical|high|medium|low\",\
+             \"title\":\"...\",\"rationale\":\"...\",\"steps\":[\"...\"],\
+             \"verification\":[\"...\"],\"affectedFiles\":[\"...\"]}]}. \
+             Order items by severity and include only concrete, verifiable work.",
         )
         .add_section(
             "Repository Health Score",
@@ -849,6 +1013,9 @@ pub async fn generate_fix_plan(
         if !ai_provider::scan_for_secrets(&response.content).is_empty() {
             return Err("AI response contains potential secret material and was not stored".into());
         }
+        let plan_document = parse_fix_plan_document(&response.content)?;
+        let plan_content = serde_json::to_string_pretty(&plan_document)
+            .map_err(|error| format!("Cannot serialize validated fix plan: {}", error))?;
 
         let now = chrono::Utc::now().to_rfc3339();
         let plan_id = uuid::Uuid::new_v4().to_string();
@@ -864,7 +1031,7 @@ pub async fn generate_fix_plan(
             job_id: job_id.clone(),
             artifact_type: "ai_plan".into(),
             title: format!("Fix Plan for repo {}", repo_id),
-            content: response.content.clone(),
+            content: plan_content.clone(),
             file_path: None,
             metadata: serde_json::json!({
                 "planId": plan_id,
@@ -875,6 +1042,8 @@ pub async fn generate_fix_plan(
                 "tokensIn": response.tokens_in,
                 "tokensOut": response.tokens_out,
                 "findingsCount": findings.len(),
+                "itemCount": plan_document.items.len(),
+                "schemaVersion": 1,
             }),
         };
         create_artifact(&artifact, db)?;
@@ -898,7 +1067,7 @@ pub async fn generate_fix_plan(
             snapshot_id: snapshot_id.into(),
             provider_id: provider_id.into(),
             model: response.model,
-            plan_content: response.content,
+            plan_content,
             context_summary,
             tokens_in: response.tokens_in,
             tokens_out: response.tokens_out,
@@ -923,6 +1092,49 @@ pub async fn generate_fix_plan(
             Err(error)
         }
     }
+}
+
+fn parse_fix_plan_document(content: &str) -> Result<FixPlanDocument, String> {
+    let trimmed = content.trim();
+    let json = if trimmed.starts_with("```") {
+        let without_opening = trimmed
+            .split_once('\n')
+            .map(|(_, rest)| rest)
+            .ok_or_else(|| "AI fix plan code fence is incomplete".to_string())?;
+        without_opening
+            .strip_suffix("```")
+            .map(str::trim)
+            .ok_or_else(|| "AI fix plan code fence is incomplete".to_string())?
+    } else {
+        trimmed
+    };
+    let document: FixPlanDocument = serde_json::from_str(json)
+        .map_err(|error| format!("AI fix plan is not valid structured JSON: {}", error))?;
+    if document.summary.trim().is_empty() || document.items.is_empty() {
+        return Err("AI fix plan must include a summary and at least one item".into());
+    }
+    let valid_priorities = ["critical", "high", "medium", "low"];
+    for (index, item) in document.items.iter().enumerate() {
+        if !valid_priorities.contains(&item.priority.as_str()) {
+            return Err(format!(
+                "Fix plan item {} has an invalid priority",
+                index + 1
+            ));
+        }
+        if item.title.trim().is_empty()
+            || item.rationale.trim().is_empty()
+            || item.steps.is_empty()
+            || item.verification.is_empty()
+            || item.steps.iter().any(|step| step.trim().is_empty())
+            || item.verification.iter().any(|step| step.trim().is_empty())
+        {
+            return Err(format!(
+                "Fix plan item {} must include title, rationale, steps, and verification",
+                index + 1
+            ));
+        }
+    }
+    Ok(document)
 }
 
 /// Propose a unified diff patch from an AI fix plan.
@@ -1148,6 +1360,8 @@ fn write_audit_log(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Db;
+    use std::fs;
 
     #[test]
     fn validates_single_file_unified_diff() {
@@ -1171,5 +1385,87 @@ mod tests {
     fn rejects_patch_that_does_not_match_requested_file() {
         let patch = "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n-old\n+new\n";
         assert!(validate_patch_paths(patch, Some("src/lib.rs")).is_err());
+    }
+
+    #[test]
+    fn isolated_patch_apply_and_hash_guarded_rollback() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("note.txt"), "old\n").unwrap();
+        for args in [
+            vec!["init", "-b", "main"],
+            vec!["config", "user.name", "AtlasForge Test"],
+            vec!["config", "user.email", "atlasforge@example.invalid"],
+            vec!["add", "note.txt"],
+            vec!["commit", "-m", "init"],
+        ] {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+
+        let db = Db::new(&std::path::PathBuf::from(":memory:")).unwrap();
+        let job_id = crate::job_engine::create_job("patch", "{}", &db).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO workspace_root (id, path, label, access_mode)
+                 VALUES ('root', ?1, 'Root', 'read_write')",
+                rusqlite::params![repo.to_string_lossy()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO project_asset (id, root_id, path, name)
+                 VALUES ('asset', 'root', ?1, 'Repo')",
+                rusqlite::params![repo.to_string_lossy()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO repository (id, asset_id, worktree_path, git_dir_path)
+                 VALUES ('repo', 'asset', ?1, ?2)",
+                rusqlite::params![repo.to_string_lossy(), repo.join(".git").to_string_lossy()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO patch_proposal
+                 (id, job_id, repo_id, file_path, patch_content, description)
+                 VALUES ('patch', ?1, 'repo', 'note.txt', ?2, 'Update note')",
+                rusqlite::params![
+                    job_id,
+                    "--- a/note.txt\n+++ b/note.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                ],
+            )
+            .unwrap();
+        }
+
+        let applied = apply_patch("patch", &db).unwrap();
+        assert_eq!(applied.status, "applied");
+        let applied_content = fs::read_to_string(repo.join("note.txt")).unwrap();
+        assert_eq!(applied_content.replace("\r\n", "\n"), "new\n");
+
+        fs::write(repo.join("note.txt"), "newer user work\n").unwrap();
+        assert!(rollback_patch("patch", &db).is_err());
+        fs::write(repo.join("note.txt"), applied_content).unwrap();
+        rollback_patch("patch", &db).unwrap();
+        assert_eq!(
+            fs::read_to_string(repo.join("note.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "old\n"
+        );
+    }
+
+    #[test]
+    fn parses_and_validates_structured_fix_plans() {
+        let document = parse_fix_plan_document(
+            "```json\n{\"summary\":\"Fix safety issues\",\"items\":[{\"priority\":\"high\",\"title\":\"Add guard\",\"rationale\":\"Prevents data loss\",\"steps\":[\"Add validation\"],\"verification\":[\"Run tests\"],\"affectedFiles\":[\"src/lib.rs\"]}]}\n```",
+        )
+        .unwrap();
+        assert_eq!(document.items.len(), 1);
+        assert!(parse_fix_plan_document("{\"summary\":\"\",\"items\":[]}").is_err());
     }
 }

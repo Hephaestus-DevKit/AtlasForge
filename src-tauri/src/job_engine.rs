@@ -1,24 +1,75 @@
 use crate::db::Db;
 use crate::models::*;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
-/// Create a new job in running state and return its ID.
+#[derive(Default)]
+pub struct JobRuntime {
+    cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+impl JobRuntime {
+    pub fn register(&self, job_id: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        if let Ok(mut cancellations) = self.cancellations.lock() {
+            cancellations.insert(job_id.to_string(), flag.clone());
+        }
+        flag
+    }
+
+    pub fn cancel(&self, job_id: &str) {
+        if let Ok(cancellations) = self.cancellations.lock() {
+            if let Some(flag) = cancellations.get(job_id) {
+                flag.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    pub fn finish(&self, job_id: &str) {
+        if let Ok(mut cancellations) = self.cancellations.lock() {
+            cancellations.remove(job_id);
+        }
+    }
+}
+
+/// Create a queued job and return its ID.
 pub fn create_job(job_type: &str, input: &str, db: &Db) -> Result<String, String> {
     let job_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO job (id, type, status, input, priority, progress, progress_total, retry_count, max_retries, created_at, updated_at) VALUES (?1, ?2, 'running', ?3, 0, 0, 0, 0, 3, ?4, ?5)",
+        "INSERT INTO job (id, type, status, input, priority, progress, progress_total, retry_count, max_retries, created_at, updated_at) VALUES (?1, ?2, 'pending', ?3, 0, 0, 0, 0, 3, ?4, ?5)",
         rusqlite::params![job_id, job_type, input, now, now],
     )
     .map_err(|e| e.to_string())?;
     drop(conn);
     append_job_event(
         job_id.as_str(),
-        "job_started",
+        "job_created",
         &serde_json::json!({"jobType": job_type}).to_string(),
         db,
     )?;
     Ok(job_id)
+}
+
+pub fn begin_job(job_id: &str, db: &Db, runtime: &JobRuntime) -> Result<Arc<AtomicBool>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let changed = conn
+        .execute(
+            "UPDATE job
+             SET status = 'running', updated_at = ?1, completed_at = NULL, error_message = NULL
+             WHERE id = ?2 AND status = 'pending'",
+            rusqlite::params![chrono::Utc::now().to_rfc3339(), job_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("Job is not pending and cannot be started".into());
+    }
+    drop(conn);
+    let cancellation = runtime.register(job_id);
+    append_job_event(job_id, "job_started", "{}", db)?;
+    Ok(cancellation)
 }
 
 /// Append a typed event to a job's event timeline.
@@ -50,8 +101,8 @@ pub fn append_job_event(
     Ok(())
 }
 
-/// Cancel a running or pending job.
-pub fn cancel_job(job_id: &str, db: &Db) -> Result<Job, String> {
+/// Cancel a running or pending job and signal any active worker.
+pub fn cancel_job(job_id: &str, db: &Db, runtime: &JobRuntime) -> Result<Job, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     let status: String = conn
@@ -66,6 +117,7 @@ pub fn cancel_job(job_id: &str, db: &Db) -> Result<Job, String> {
         return Err(format!("Cannot cancel job with status '{}'", status));
     }
 
+    runtime.cancel(job_id);
     conn.execute(
         "UPDATE job SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?1",
         rusqlite::params![job_id],
@@ -78,17 +130,31 @@ pub fn cancel_job(job_id: &str, db: &Db) -> Result<Job, String> {
     load_job(job_id, db)
 }
 
-/// Retry a failed or cancelled job by creating a new job with the same input.
+/// Retry a failed or cancelled job by creating a queued job with the same input.
 pub fn retry_job(job_id: &str, db: &Db) -> Result<Job, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    let (job_type, input): (String, String) = conn
-        .query_row(
-            "SELECT type, input FROM job WHERE id = ?1",
+    let (job_type, input, status, retry_count, max_retries): (String, String, String, i64, i64) =
+        conn.query_row(
+            "SELECT type, input, status, retry_count, max_retries FROM job WHERE id = ?1",
             rusqlite::params![job_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .map_err(|e| format!("Job not found: {}", e))?;
+    if status != "failed" && status != "cancelled" {
+        return Err(format!("Cannot retry job with status '{}'", status));
+    }
+    if retry_count >= max_retries {
+        return Err(format!("Job has reached its retry limit ({})", max_retries));
+    }
 
     // Increment retry_count on original
     conn.execute(
@@ -115,7 +181,7 @@ pub fn retry_job(job_id: &str, db: &Db) -> Result<Job, String> {
     append_job_event(
         &new_id,
         "job_created",
-        &format!("{{\"retry_of\":\"{}\"}}", job_id),
+        &serde_json::json!({"retryOf": job_id}).to_string(),
         db,
     )?;
 
@@ -136,30 +202,55 @@ pub fn update_progress(job_id: &str, progress: i32, total: i32, db: &Db) -> Resu
 /// Mark a job as failed with error message.
 pub fn fail_job(job_id: &str, error: &str, db: &Db) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE job SET status = 'failed', error_message = ?1, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?2",
+    let changed = conn.execute(
+        "UPDATE job SET status = 'failed', error_message = ?1, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?2 AND status != 'cancelled'",
         rusqlite::params![error, job_id],
     )
     .map_err(|e| e.to_string())?;
     drop(conn);
-    append_job_event(
-        job_id,
-        "job_failed",
-        &serde_json::json!({"error": error}).to_string(),
-        db,
-    )
+    if changed > 0 {
+        append_job_event(
+            job_id,
+            "job_failed",
+            &serde_json::json!({"error": error}).to_string(),
+            db,
+        )?;
+    }
+    Ok(())
 }
 
 /// Mark a job as completed.
 pub fn complete_job(job_id: &str, db: &Db) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE job SET status = 'completed', progress = progress_total, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?1",
+    let changed = conn.execute(
+        "UPDATE job SET status = 'completed', progress = progress_total, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?1 AND status != 'cancelled'",
         rusqlite::params![job_id],
     )
     .map_err(|e| e.to_string())?;
     drop(conn);
-    append_job_event(job_id, "job_completed", "{}", db)
+    if changed > 0 {
+        append_job_event(job_id, "job_completed", "{}", db)?;
+    }
+    Ok(())
+}
+
+pub fn recover_interrupted_jobs(db: &Db) -> Result<usize, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id FROM job WHERE status = 'running'")
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+    drop(conn);
+    for id in &ids {
+        fail_job(id, "Interrupted by the previous application shutdown", db)?;
+        append_job_event(id, "job_interrupted", "{}", db)?;
+    }
+    Ok(ids.len())
 }
 
 /// Load a single job by ID.
@@ -260,13 +351,14 @@ mod tests {
 
         let job = load_job(&job_id, &db).unwrap();
         assert_eq!(job.job_type, "scan");
-        assert_eq!(job.status, "running");
+        assert_eq!(job.status, "pending");
     }
 
     #[test]
     fn test_complete_job() {
         let db = test_db();
         let job_id = create_job("audit", "{}", &db).unwrap();
+        begin_job(&job_id, &db, &JobRuntime::default()).unwrap();
         complete_job(&job_id, &db).unwrap();
 
         let job = load_job(&job_id, &db).unwrap();
@@ -278,6 +370,7 @@ mod tests {
     fn test_fail_job() {
         let db = test_db();
         let job_id = create_job("reindex", "{}", &db).unwrap();
+        begin_job(&job_id, &db, &JobRuntime::default()).unwrap();
         fail_job(&job_id, "disk full", &db).unwrap();
 
         let job = load_job(&job_id, &db).unwrap();
@@ -306,7 +399,9 @@ mod tests {
     fn test_cancel_job() {
         let db = test_db();
         let job_id = create_job("verification", "{}", &db).unwrap();
-        let job = cancel_job(&job_id, &db).unwrap();
+        let runtime = JobRuntime::default();
+        begin_job(&job_id, &db, &runtime).unwrap();
+        let job = cancel_job(&job_id, &db, &runtime).unwrap();
         assert_eq!(job.status, "cancelled");
     }
 
@@ -314,6 +409,7 @@ mod tests {
     fn test_retry_job() {
         let db = test_db();
         let job_id = create_job("scan", r#"{"roots":["r1"]}"#, &db).unwrap();
+        begin_job(&job_id, &db, &JobRuntime::default()).unwrap();
         fail_job(&job_id, "timeout", &db).unwrap();
 
         let new_job = retry_job(&job_id, &db).unwrap();

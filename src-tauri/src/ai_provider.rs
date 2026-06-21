@@ -44,8 +44,7 @@ pub fn upsert_provider(provider: &AiProvider, db: &Db) -> Result<(), String> {
             return Err("apiKeyRef must be a valid environment variable name".into());
         }
     }
-    let serialized_config =
-        serde_json::to_string(&provider.config).map_err(|e| e.to_string())?;
+    let serialized_config = serde_json::to_string(&provider.config).map_err(|e| e.to_string())?;
     if !scan_for_secrets(&serialized_config).is_empty() {
         return Err("Provider config must not contain raw secrets; use apiKeyRef instead".into());
     }
@@ -371,6 +370,109 @@ pub struct AiResponse {
     pub tokens_in: usize,
     pub tokens_out: usize,
     pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderProbe {
+    pub reachable: bool,
+    pub message: String,
+    pub latency_ms: u64,
+    pub models: Vec<String>,
+}
+
+pub async fn probe_provider(provider: &AiProvider) -> ProviderProbe {
+    let started = std::time::Instant::now();
+    let result = async {
+        validate_base_url(&provider.base_url)?;
+        match provider.adapter_type.as_str() {
+            "ollama" => {
+                let response = http_client()?
+                    .get(format!(
+                        "{}/api/tags",
+                        provider.base_url.trim_end_matches('/')
+                    ))
+                    .send()
+                    .await
+                    .map_err(|error| format!("Cannot reach Ollama: {}", error))?
+                    .error_for_status()
+                    .map_err(|error| format!("Ollama health check failed: {}", error))?
+                    .json::<Value>()
+                    .await
+                    .map_err(|error| format!("Invalid Ollama model response: {}", error))?;
+                Ok(response
+                    .get("models")
+                    .and_then(|value| value.as_array())
+                    .map(|models| {
+                        models
+                            .iter()
+                            .filter_map(|model| {
+                                model
+                                    .get("name")
+                                    .and_then(|value| value.as_str())
+                                    .map(ToOwned::to_owned)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default())
+            }
+            "openai_compatible" => {
+                let mut request = http_client()?.get(format!(
+                    "{}/models",
+                    provider.base_url.trim_end_matches('/')
+                ));
+                if let Some(key_ref) = &provider.api_key_ref {
+                    let key = std::env::var(key_ref)
+                        .map_err(|_| format!("Environment variable '{}' is not set", key_ref))?;
+                    request = request.bearer_auth(key);
+                }
+                let response = request
+                    .send()
+                    .await
+                    .map_err(|error| format!("Cannot reach provider: {}", error))?
+                    .error_for_status()
+                    .map_err(|error| format!("Provider health check failed: {}", error))?
+                    .json::<Value>()
+                    .await
+                    .map_err(|error| format!("Invalid provider model response: {}", error))?;
+                Ok(response
+                    .get("data")
+                    .and_then(|value| value.as_array())
+                    .map(|models| {
+                        models
+                            .iter()
+                            .filter_map(|model| {
+                                model
+                                    .get("id")
+                                    .and_then(|value| value.as_str())
+                                    .map(ToOwned::to_owned)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default())
+            }
+            _ => Err(format!(
+                "Unsupported adapter type: {}",
+                provider.adapter_type
+            )),
+        }
+    }
+    .await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(models) => ProviderProbe {
+            reachable: true,
+            message: format!("Provider reachable; {} model(s) reported", models.len()),
+            latency_ms,
+            models,
+        },
+        Err(message) => ProviderProbe {
+            reachable: false,
+            message,
+            latency_ms,
+            models: Vec::new(),
+        },
+    }
 }
 
 async fn call_ollama(base_url: &str, model: &str, prompt: &str) -> Result<AiResponse, String> {

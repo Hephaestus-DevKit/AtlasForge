@@ -1,7 +1,18 @@
-use rusqlite::{Connection, Result as SqlResult};
+use rusqlite::Connection;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
+
+#[derive(Debug, thiserror::Error)]
+pub enum DbError {
+    #[error("database error: {0}")]
+    Sql(#[from] rusqlite::Error),
+    #[error("database I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("database integrity check failed: {0}")]
+    Integrity(String),
+}
 
 pub const MIGRATION_001_SQL: &str = include_str!("../migrations/001_initial.sql");
 pub const MIGRATION_002_SQL: &str = include_str!("../migrations/002_repo_profile.sql");
@@ -16,20 +27,27 @@ pub const MIGRATION_010_SQL: &str = include_str!("../migrations/010_semantic.sql
 pub const MIGRATION_011_SQL: &str = include_str!("../migrations/011_automation.sql");
 pub const MIGRATION_012_SQL: &str = include_str!("../migrations/012_scan_reliability.sql");
 pub const MIGRATION_013_SQL: &str = include_str!("../migrations/013_verification_run.sql");
+pub const MIGRATION_014_SQL: &str = include_str!("../migrations/014_trusted_execution.sql");
+pub const MIGRATION_015_SQL: &str = include_str!("../migrations/015_incremental_index.sql");
+pub const MIGRATION_016_SQL: &str = include_str!("../migrations/016_security_wording.sql");
 
 pub struct Db {
     pub conn: Mutex<Connection>,
 }
 
 impl Db {
-    pub fn new(db_path: &PathBuf) -> SqlResult<Self> {
+    pub fn new(db_path: &PathBuf) -> Result<Self, DbError> {
+        let existed = db_path.is_file();
         if let Some(parent) = db_path.parent() {
-            fs::create_dir_all(parent).ok();
+            fs::create_dir_all(parent)?;
         }
         let mut conn = Connection::open(db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        let integrity: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(DbError::Integrity(integrity));
+        }
 
-        // Run migrations in order
         let migrations = [
             MIGRATION_001_SQL,
             MIGRATION_002_SQL,
@@ -44,6 +62,9 @@ impl Db {
             MIGRATION_011_SQL,
             MIGRATION_012_SQL,
             MIGRATION_013_SQL,
+            MIGRATION_014_SQL,
+            MIGRATION_015_SQL,
+            MIGRATION_016_SQL,
         ];
 
         // Track applied migrations
@@ -53,6 +74,13 @@ impl Db {
                 applied_at TEXT NOT NULL DEFAULT (datetime('now'))
             );",
         )?;
+
+        let applied_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM _migration", [], |row| row.get(0))?;
+        if existed && applied_count < migrations.len() as i64 {
+            create_migration_backup(&conn, db_path)?;
+            prune_backups(db_path, 3)?;
+        }
 
         for (i, sql) in migrations.iter().enumerate() {
             let idx = (i + 1) as i64;
@@ -82,6 +110,55 @@ impl Db {
     }
 }
 
+fn create_migration_backup(source: &Connection, db_path: &Path) -> Result<PathBuf, DbError> {
+    let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = db_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("atlasforge");
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let backup_path = parent.join(format!("{}.pre-migration-{}.db", stem, timestamp));
+    let mut destination = Connection::open(&backup_path)?;
+    let backup = rusqlite::backup::Backup::new(source, &mut destination)?;
+    backup.run_to_completion(16, Duration::from_millis(25), None)?;
+    drop(backup);
+    let integrity: String = destination.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+    if integrity != "ok" {
+        let _ = fs::remove_file(&backup_path);
+        return Err(DbError::Integrity(format!(
+            "migration backup is invalid: {}",
+            integrity
+        )));
+    }
+    log::info!("Created migration backup at {:?}", backup_path);
+    Ok(backup_path)
+}
+
+fn prune_backups(db_path: &Path, retain: usize) -> Result<(), DbError> {
+    let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = db_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("atlasforge");
+    let prefix = format!("{}.pre-migration-", stem);
+    let mut backups = fs::read_dir(parent)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .map(|name| name.starts_with(&prefix) && name.ends_with(".db"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    backups.sort();
+    let remove_count = backups.len().saturating_sub(retain);
+    for path in backups.into_iter().take(remove_count) {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,7 +173,7 @@ mod tests {
             let applied: i64 = conn
                 .query_row("SELECT COUNT(*) FROM _migration", [], |row| row.get(0))
                 .unwrap();
-            assert_eq!(applied, 13);
+            assert_eq!(applied, 16);
         }
         drop(db);
 
@@ -105,6 +182,14 @@ mod tests {
         let applied: i64 = conn
             .query_row("SELECT COUNT(*) FROM _migration", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(applied, 13);
+        assert_eq!(applied, 16);
+    }
+
+    #[test]
+    fn rejects_corrupt_database_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("atlasforge.db");
+        fs::write(&path, b"not a sqlite database").unwrap();
+        assert!(Db::new(&path).is_err());
     }
 }

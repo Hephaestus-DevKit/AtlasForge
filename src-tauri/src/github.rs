@@ -59,10 +59,134 @@ pub struct GitHubRelease {
     pub url: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubEvidence {
+    pub workflow_runs: Vec<WorkflowRun>,
+    pub pull_requests: Vec<GitHubPR>,
+    pub releases: Vec<GitHubRelease>,
+    pub sync_errors: Vec<String>,
+}
+
+pub fn load_evidence(repo_id: &str, db: &Db) -> Result<GitHubEvidence, String> {
+    let conn = db.conn.lock().map_err(|error| error.to_string())?;
+    let (integration_id, sync_errors): (String, String) = conn
+        .query_row(
+            "SELECT id, sync_errors FROM github_integration WHERE repo_id = ?1",
+            rusqlite::params![repo_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| format!("GitHub integration not found: {}", error))?;
+
+    let workflow_runs = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, integration_id, run_id, workflow_name, branch, status, conclusion,
+                        triggered_at, completed_at, url
+                 FROM github_workflow_run
+                 WHERE integration_id = ?1
+                 ORDER BY triggered_at DESC LIMIT 20",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![&integration_id], |row| {
+                Ok(WorkflowRun {
+                    id: row.get(0)?,
+                    integration_id: row.get(1)?,
+                    run_id: row.get(2)?,
+                    workflow_name: row.get(3)?,
+                    branch: row.get(4)?,
+                    status: row.get(5)?,
+                    conclusion: row.get(6)?,
+                    triggered_at: row.get(7)?,
+                    completed_at: row.get(8)?,
+                    url: row.get(9)?,
+                })
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
+    let pull_requests = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, integration_id, pr_number, title, state, author, branch, url
+                 FROM github_pr WHERE integration_id = ?1
+                 ORDER BY updated_at_gh DESC LIMIT 20",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![&integration_id], |row| {
+                Ok(GitHubPR {
+                    id: row.get(0)?,
+                    integration_id: row.get(1)?,
+                    pr_number: row.get(2)?,
+                    title: row.get(3)?,
+                    state: row.get(4)?,
+                    author: row.get(5)?,
+                    branch: row.get(6)?,
+                    url: row.get(7)?,
+                })
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
+    let releases = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, integration_id, release_id, tag_name, name, is_draft,
+                        is_prerelease, published_at, url
+                 FROM github_release WHERE integration_id = ?1
+                 ORDER BY published_at DESC LIMIT 20",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![&integration_id], |row| {
+                Ok(GitHubRelease {
+                    id: row.get(0)?,
+                    integration_id: row.get(1)?,
+                    release_id: row.get(2)?,
+                    tag_name: row.get(3)?,
+                    name: row.get(4)?,
+                    is_draft: row.get::<_, i32>(5)? != 0,
+                    is_prerelease: row.get::<_, i32>(6)? != 0,
+                    published_at: row.get(7)?,
+                    url: row.get(8)?,
+                })
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
+    Ok(GitHubEvidence {
+        workflow_runs,
+        pull_requests,
+        releases,
+        sync_errors: serde_json::from_str(&sync_errors).unwrap_or_default(),
+    })
+}
+
+pub fn set_sync_errors(integration_id: &str, errors: &[String], db: &Db) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|error| error.to_string())?;
+    conn.execute(
+        "UPDATE github_integration
+         SET sync_errors = ?1, last_synced_at = ?2
+         WHERE id = ?3",
+        rusqlite::params![
+            serde_json::to_string(errors).unwrap_or_else(|_| "[]".into()),
+            chrono::Utc::now().to_rfc3339(),
+            integration_id,
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 /// Check if gh CLI is authenticated.
 pub fn check_gh_auth() -> Result<GhAuthStatus, String> {
     let output = std::process::Command::new("gh")
-        .args(&["auth", "status"])
+        .args(["auth", "status"])
         .output()
         .map_err(|e| format!("gh CLI not found: {}", e))?;
 
@@ -79,7 +203,7 @@ pub fn check_gh_auth() -> Result<GhAuthStatus, String> {
             let parts: Vec<&str> = l.split(" as ").collect();
             parts
                 .get(1)
-                .map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string())
+                .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
         });
 
     Ok(GhAuthStatus {
@@ -109,7 +233,7 @@ pub fn resolve_github_repo(
 ) -> Result<GitHubIntegration, String> {
     // Get remote URL
     let remote_url = std::process::Command::new("git")
-        .args(&["config", "--get", "remote.origin.url"])
+        .args(["config", "--get", "remote.origin.url"])
         .current_dir(worktree_path)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -123,7 +247,7 @@ pub fn resolve_github_repo(
 
     // Fetch repo info via gh CLI
     let repo_info = std::process::Command::new("gh")
-        .args(&[
+        .args([
             "repo",
             "view",
             &format!("{}/{}", owner, repo_name),
@@ -175,7 +299,7 @@ pub fn sync_workflow_runs(
     db: &Db,
 ) -> Result<Vec<WorkflowRun>, String> {
     let output = std::process::Command::new("gh")
-        .args(&[
+        .args([
             "run",
             "list",
             "--repo",
@@ -261,7 +385,7 @@ pub fn sync_workflow_runs(
 /// Sync PRs from GitHub.
 pub fn sync_prs(integration: &GitHubIntegration, db: &Db) -> Result<Vec<GitHubPR>, String> {
     let output = std::process::Command::new("gh")
-        .args(&[
+        .args([
             "pr",
             "list",
             "--repo",
@@ -339,7 +463,7 @@ pub fn sync_releases(
     db: &Db,
 ) -> Result<Vec<GitHubRelease>, String> {
     let output = std::process::Command::new("gh")
-        .args(&[
+        .args([
             "release",
             "list",
             "--repo",
@@ -460,7 +584,7 @@ pub fn create_pr(
     let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let pr_number: i64 = url
         .split('/')
-        .last()
+        .next_back()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -533,7 +657,7 @@ pub fn create_release(
 /// Rerun a failed workflow.
 pub fn rerun_workflow(integration: &GitHubIntegration, run_id: &str) -> Result<(), String> {
     let output = std::process::Command::new("gh")
-        .args(&[
+        .args([
             "run",
             "rerun",
             run_id,
@@ -565,8 +689,7 @@ fn parse_github_url(url: &str) -> Result<(String, String), String> {
         if parts.len() >= 5 {
             return Ok((parts[3].to_string(), parts[4].to_string()));
         }
-    } else if url.starts_with("git@github.com:") {
-        let rest = &url["git@github.com:".len()..];
+    } else if let Some(rest) = url.strip_prefix("git@github.com:") {
         let parts: Vec<&str> = rest.split('/').collect();
         if parts.len() >= 2 {
             return Ok((parts[0].to_string(), parts[1].to_string()));

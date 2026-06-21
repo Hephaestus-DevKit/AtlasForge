@@ -1,21 +1,26 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   WorkspaceRoot,
   Repository,
+  RepositorySummary,
   Job,
   JobEvent,
+  AuditEntry,
   AddRootInput,
   ScanResult,
   RepoProfile,
   ToolInfo,
   ToolResult,
+  ToolInvocation,
   SearchResult,
+  IndexedDocument,
   IndexStats,
   HealthSnapshot,
   Finding,
   AiProvider,
   AiResponse,
+  ProviderProbe,
   Artifact,
   FixPlan,
   PatchProposal,
@@ -23,6 +28,8 @@ import type {
   GitHubIntegration,
   GitHubPR,
   GitHubRelease,
+  GitHubEvidence,
+  GitHubSyncResult,
   VerificationCommand,
   VerificationResult,
   VerificationRun,
@@ -30,7 +37,48 @@ import type {
   Notification,
   ScanErrorRecord,
   ContextPreview,
+  PermissionRequest,
 } from "../types";
+
+function hasIpcBridge(): boolean {
+  const internals = (globalThis as typeof globalThis & {
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  }).__TAURI_INTERNALS__;
+  return isTauri() || typeof internals?.invoke === "function";
+}
+
+function browserFallback(command: string): unknown {
+  if (
+    command.startsWith("list_")
+    || command === "detect_local_providers_cmd"
+    || command === "detect_commands_cmd"
+  ) {
+    return [];
+  }
+  if (
+    command.startsWith("get_")
+    || command === "resolve_github_repo_cmd"
+  ) {
+    return null;
+  }
+  if (command === "check_gh_auth_cmd") {
+    return {
+      authenticated: false,
+      username: null,
+      message: "GitHub status is available in the desktop application.",
+    };
+  }
+  if (command === "tick_scheduler_cmd") return [];
+  if (command === "mark_all_notifications_read_cmd") return 0;
+  throw new Error("This action is available only in the AtlasForge desktop application.");
+}
+
+async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!hasIpcBridge()) {
+    return browserFallback(command) as T;
+  }
+  return tauriInvoke<T>(command, args);
+}
 
 // --- Greeting (test IPC) ---
 
@@ -65,6 +113,10 @@ export async function listRepositories(): Promise<Repository[]> {
   return invoke<Repository[]>("list_repositories");
 }
 
+export async function listRepositorySummaries(): Promise<RepositorySummary[]> {
+  return invoke<RepositorySummary[]>("list_repository_summaries");
+}
+
 // --- Job/Scan commands ---
 
 export async function startScan(rootIds?: string[]): Promise<ScanResult> {
@@ -77,6 +129,10 @@ export async function listJobs(limit?: number): Promise<Job[]> {
 
 export async function getJobEvents(jobId: string): Promise<JobEvent[]> {
   return invoke<JobEvent[]>("get_job_events", { jobId });
+}
+
+export async function listAuditLog(limit?: number): Promise<AuditEntry[]> {
+  return invoke<AuditEntry[]>("list_audit_log_cmd", { limit: limit ?? 100 });
 }
 
 // --- Repo Profile commands ---
@@ -112,14 +168,14 @@ export async function listTools(): Promise<ToolInfo[]> {
 export async function invokeTool(
   jobId: string,
   toolName: string,
-  input: any,
+  input: unknown,
   dryRun?: boolean,
 ): Promise<ToolResult> {
   return invoke<ToolResult>("invoke_tool_cmd", { jobId, toolName, input, dryRun });
 }
 
-export async function listInvocations(jobId: string): Promise<any[]> {
-  return invoke<any[]>("list_invocations_cmd", { jobId });
+export async function listInvocations(jobId: string): Promise<ToolInvocation[]> {
+  return invoke<ToolInvocation[]>("list_invocations_cmd", { jobId });
 }
 
 // --- Indexer commands ---
@@ -128,8 +184,8 @@ export async function searchIndex(query: string, limit?: number, repoId?: string
   return invoke<SearchResult[]>("search_index_cmd", { query, limit, repoId });
 }
 
-export async function listDocuments(repoId: string): Promise<any[]> {
-  return invoke<any[]>("list_documents_cmd", { repoId });
+export async function listDocuments(repoId: string): Promise<IndexedDocument[]> {
+  return invoke<IndexedDocument[]>("list_documents_cmd", { repoId });
 }
 
 export async function reindexRepo(repoId: string): Promise<IndexStats> {
@@ -168,6 +224,10 @@ export async function deleteAiProvider(id: string): Promise<void> {
   return invoke("delete_ai_provider_cmd", { id });
 }
 
+export async function probeAiProvider(providerId: string): Promise<ProviderProbe> {
+  return invoke<ProviderProbe>("probe_ai_provider_cmd", { providerId });
+}
+
 export async function callAi(
   providerId: string,
   prompt: string,
@@ -186,8 +246,8 @@ export async function listPatchProposals(repoId: string): Promise<PatchProposal[
   return invoke<PatchProposal[]>("list_patch_proposals_cmd", { repoId });
 }
 
-export async function applyPatch(proposalId: string): Promise<PatchProposal> {
-  return invoke<PatchProposal>("apply_patch_cmd", { proposalId });
+export async function applyPatch(proposalId: string, approvalId: string): Promise<PatchProposal> {
+  return invoke<PatchProposal>("apply_patch_cmd", { proposalId, approvalId });
 }
 
 export async function rejectPatch(proposalId: string, reason: string): Promise<void> {
@@ -240,8 +300,16 @@ export async function resolveGitHubRepo(repoId: string): Promise<GitHubIntegrati
   return invoke<GitHubIntegration>("resolve_github_repo_cmd", { repoId });
 }
 
-export async function syncGitHub(repoId: string): Promise<any> {
-  return invoke("sync_github_cmd", { repoId });
+export async function getGitHubIntegration(repoId: string): Promise<GitHubIntegration | null> {
+  return invoke<GitHubIntegration | null>("get_github_integration_cmd", { repoId });
+}
+
+export async function getGitHubEvidence(repoId: string): Promise<GitHubEvidence> {
+  return invoke<GitHubEvidence>("get_github_evidence_cmd", { repoId });
+}
+
+export async function syncGitHub(repoId: string): Promise<GitHubSyncResult> {
+  return invoke<GitHubSyncResult>("sync_github_cmd", { repoId });
 }
 
 export async function createPr(
@@ -276,21 +344,60 @@ export async function detectCommands(worktreePath: string): Promise<Verification
   return invoke<VerificationCommand[]>("detect_commands_cmd", { worktreePath });
 }
 
+export async function requestVerificationApproval(
+  repoId: string,
+  cwd: string,
+  command: string,
+): Promise<PermissionRequest> {
+  return invoke<PermissionRequest>("request_verification_approval_cmd", {
+    repoId,
+    cwd,
+    command,
+  });
+}
+
+export async function requestPatchApproval(proposalId: string): Promise<PermissionRequest> {
+  return invoke<PermissionRequest>("request_patch_approval_cmd", { proposalId });
+}
+
+export async function decidePermissionRequest(
+  requestId: string,
+  approved: boolean,
+): Promise<PermissionRequest> {
+  return invoke<PermissionRequest>("decide_permission_request_cmd", { requestId, approved });
+}
+
+export async function listPermissionRequests(status?: string): Promise<PermissionRequest[]> {
+  return invoke<PermissionRequest[]>("list_permission_requests_cmd", { status });
+}
+
 export async function runVerification(
   command: string,
   cwd: string,
-  repoId?: string,
+  repoId: string,
+  approvalId: string,
 ): Promise<VerificationResult> {
-  return invoke<VerificationResult>("run_verification_cmd", { command, cwd, repoId });
+  return invoke<VerificationResult>("run_verification_cmd", {
+    command,
+    cwd,
+    repoId,
+    approvalId,
+  });
 }
 
 export async function runBatchVerification(
   commands: VerificationCommand[],
   cwd: string,
-  repoId?: string,
+  repoId: string,
+  approvalIds: string[],
 ): Promise<VerificationResult[]> {
   const commandNames = commands.map((command) => command.command);
-  return invoke<VerificationResult[]>("run_batch_verification_cmd", { commandNames, cwd, repoId });
+  return invoke<VerificationResult[]>("run_batch_verification_cmd", {
+    commandNames,
+    cwd,
+    repoId,
+    approvalIds,
+  });
 }
 
 export async function listVerificationRuns(repoId: string, limit?: number): Promise<VerificationRun[]> {
@@ -343,6 +450,7 @@ export async function listScanErrors(rootId: string): Promise<ScanErrorRecord[]>
  * Returns the selected folder path, or null if the user cancelled.
  */
 export async function pickFolder(): Promise<string | null> {
+  if (!hasIpcBridge()) return null;
   const selected = await open({
     directory: true,
     multiple: false,

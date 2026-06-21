@@ -2,6 +2,9 @@ use crate::db::Db;
 use std::collections::HashSet;
 use std::path::Path;
 
+const INDEX_VERSION: i64 = 1;
+type ChunkData = (Option<String>, Option<i32>, Option<i32>, String);
+
 /// Index a repository: create source documents and chunks for key files.
 pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexStats, String> {
     let root = Path::new(worktree_path);
@@ -16,9 +19,14 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
 
     for (relative_path, abs_path) in &files {
         match index_file(repo_id, relative_path, abs_path, db) {
-            Ok(chunk_count) => {
+            Ok((chunk_count, skipped)) => {
                 stats.documents += 1;
                 stats.chunks += chunk_count;
+                if skipped {
+                    stats.skipped_documents += 1;
+                } else {
+                    stats.indexed_documents += 1;
+                }
             }
             Err(e) => {
                 stats.errors.push(format!("{}: {}", relative_path, e));
@@ -35,6 +43,8 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
 pub struct IndexStats {
     pub documents: usize,
     pub chunks: usize,
+    pub indexed_documents: usize,
+    pub skipped_documents: usize,
     pub errors: Vec<String>,
 }
 
@@ -383,7 +393,7 @@ fn index_file(
     relative_path: &str,
     abs_path: &str,
     db: &Db,
-) -> Result<usize, String> {
+) -> Result<(usize, bool), String> {
     let content =
         std::fs::read_to_string(abs_path).map_err(|e| format!("Cannot read file: {}", e))?;
     let content = crate::ai_provider::redact_secrets(&content);
@@ -392,8 +402,31 @@ fn index_file(
         std::fs::metadata(abs_path).map_err(|e| format!("Cannot read file metadata: {}", e))?;
     let language = detect_language_from_path(relative_path);
     let mime_type = detect_mime_type(relative_path);
+    let content_hash = simple_hash(&content);
 
     let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let existing = conn
+        .query_row(
+            "SELECT id, content_hash, index_version,
+                    (SELECT COUNT(*) FROM chunk WHERE document_id = source_document.id)
+             FROM source_document
+             WHERE repo_id = ?1 AND path = ?2",
+            rusqlite::params![repo_id, relative_path],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .ok();
+    if let Some((_, Some(existing_hash), version, chunk_count)) = &existing {
+        if existing_hash == &content_hash && *version == INDEX_VERSION {
+            return Ok((*chunk_count as usize, true));
+        }
+    }
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // Upsert source document
@@ -403,17 +436,25 @@ fn index_file(
             rusqlite::params![repo_id, relative_path],
             |row| row.get(0),
         )
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+        .unwrap_or_else(|_| {
+            existing
+                .as_ref()
+                .map(|value| value.0.clone())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        });
 
     tx.execute(
-        "INSERT INTO source_document (id, repo_id, path, mime_type, language, size_bytes, indexed_at, content_hash)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), ?7)
+        "INSERT INTO source_document
+         (id, repo_id, path, mime_type, language, size_bytes, modified_at, indexed_at, content_hash, index_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'), ?8, ?9)
          ON CONFLICT(repo_id, path) DO UPDATE SET
              mime_type = excluded.mime_type,
              language = excluded.language,
              size_bytes = excluded.size_bytes,
+             modified_at = excluded.modified_at,
              indexed_at = excluded.indexed_at,
-             content_hash = excluded.content_hash",
+             content_hash = excluded.content_hash,
+             index_version = excluded.index_version",
         rusqlite::params![
             doc_id,
             repo_id,
@@ -421,7 +462,9 @@ fn index_file(
             mime_type,
             language,
             metadata.len() as i64,
-            simple_hash(&content),
+            metadata.modified().ok().and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok()).map(|value| value.as_secs().to_string()),
+            content_hash,
+            INDEX_VERSION,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -449,7 +492,7 @@ fn index_file(
     }
 
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(chunk_count)
+    Ok((chunk_count, false))
 }
 
 fn remove_stale_documents(
@@ -492,10 +535,7 @@ fn build_fts_query(query: &str) -> String {
         .join(" AND ")
 }
 
-fn chunk_content(
-    content: &str,
-    path: &str,
-) -> Vec<(Option<String>, Option<i32>, Option<i32>, String)> {
+fn chunk_content(content: &str, path: &str) -> Vec<ChunkData> {
     let ext = std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
@@ -508,7 +548,7 @@ fn chunk_content(
     }
 }
 
-fn chunk_markdown(content: &str) -> Vec<(Option<String>, Option<i32>, Option<i32>, String)> {
+fn chunk_markdown(content: &str) -> Vec<ChunkData> {
     let mut chunks = Vec::new();
     let mut current_heading: Option<String> = None;
     let mut current_lines: Vec<String> = Vec::new();
@@ -563,7 +603,7 @@ fn chunk_markdown(content: &str) -> Vec<(Option<String>, Option<i32>, Option<i32
     chunks
 }
 
-fn chunk_config(content: &str) -> Vec<(Option<String>, Option<i32>, Option<i32>, String)> {
+fn chunk_config(content: &str) -> Vec<ChunkData> {
     // Config files: chunk by top-level sections or whole file if small
     if content.lines().count() < 100 {
         return vec![(
@@ -588,26 +628,25 @@ fn chunk_config(content: &str) -> Vec<(Option<String>, Option<i32>, Option<i32>,
             && !line.starts_with('#')
             && !line.starts_with('{')
             && !line.starts_with('}')
+            && !current_lines.is_empty()
         {
-            if !current_lines.is_empty() {
-                chunks.push((
-                    Some(
-                        current_lines[0]
-                            .split(':')
-                            .next()
-                            .unwrap_or("")
-                            .split('=')
-                            .next()
-                            .unwrap_or("")
-                            .trim()
-                            .to_string(),
-                    ),
-                    Some(start_line as i32),
-                    Some((line_num - 1) as i32),
-                    current_lines.join("\n"),
-                ));
-                start_line = line_num;
-            }
+            chunks.push((
+                Some(
+                    current_lines[0]
+                        .split(':')
+                        .next()
+                        .unwrap_or("")
+                        .split('=')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                ),
+                Some(start_line as i32),
+                Some((line_num - 1) as i32),
+                current_lines.join("\n"),
+            ));
+            start_line = line_num;
         }
 
         current_lines.push(line.to_string());
@@ -640,7 +679,7 @@ fn chunk_config(content: &str) -> Vec<(Option<String>, Option<i32>, Option<i32>,
     chunks
 }
 
-fn chunk_code(content: &str) -> Vec<(Option<String>, Option<i32>, Option<i32>, String)> {
+fn chunk_code(content: &str) -> Vec<ChunkData> {
     let mut chunks = Vec::new();
     let mut current_lines: Vec<String> = Vec::new();
     let mut start_line: usize = 1;
@@ -897,6 +936,8 @@ mod tests {
 
         let stats = index_repo("repo", &temp.path().to_string_lossy(), &db).unwrap();
         assert_eq!(stats.documents, 1);
+        assert_eq!(stats.indexed_documents, 1);
+        assert_eq!(stats.skipped_documents, 0);
         let content: String = db
             .conn
             .lock()
@@ -905,6 +946,10 @@ mod tests {
             .unwrap();
         assert!(content.contains("[REDACTED]"));
         assert!(!content.contains("abcdefghijklmnop123456"));
+
+        let unchanged = index_repo("repo", &temp.path().to_string_lossy(), &db).unwrap();
+        assert_eq!(unchanged.indexed_documents, 0);
+        assert_eq!(unchanged.skipped_documents, 1);
 
         fs::remove_file(source).unwrap();
         index_repo("repo", &temp.path().to_string_lossy(), &db).unwrap();

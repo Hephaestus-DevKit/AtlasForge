@@ -1,10 +1,11 @@
 import { useEffect, useState, useMemo } from "react";
 import {
-  listRepositories, getRepoProfile, refreshProfiles,
+  listRepositorySummaries, getRepoProfile, refreshProfiles,
   auditRepo, getHealthSnapshot, getFindings,
-  resolveGitHubRepo, syncGitHub,
+  resolveGitHubRepo, getGitHubIntegration, syncGitHub, getGitHubEvidence,
   detectCommands, runVerification, runBatchVerification, listVerificationRuns,
   listPatchProposals, applyPatch, rejectPatch, rollbackPatch,
+  requestVerificationApproval, requestPatchApproval, decidePermissionRequest,
   reindexRepo,
   generateFixPlan, proposeFix, listFixPlans,
   listAiProviders, previewFixPlanContext,
@@ -12,8 +13,9 @@ import {
 import type {
   Repository, RepoProfile, HealthSnapshot, Finding,
   CategoryScore, RecommendedTask,
-  GitHubIntegration, VerificationCommand, VerificationResult, VerificationRun,
+  GitHubIntegration, GitHubEvidence, VerificationCommand, VerificationResult, VerificationRun,
   PatchProposal, Artifact, AiProvider, ContextPreview,
+  PermissionRequest,
 } from "../types";
 import {
   GitBranch, ExternalLink, Code2, Package, FileText, Shield,
@@ -24,6 +26,7 @@ import {
 } from "lucide-react";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { EmptyState } from "../components/EmptyState";
+import { ApprovalModal } from "../components/ApprovalModal";
 
 type DetailTab = "overview" | "profile" | "audit" | "fixes" | "github" | "verify" | "patches";
 type SortKey = "path" | "branch" | "dirty" | "lastCommit" | "score" | "language";
@@ -34,6 +37,11 @@ interface Toast {
   message: string;
   type: "success" | "error" | "info";
 }
+
+type PendingApprovalAction =
+  | { kind: "verification"; command: VerificationCommand }
+  | { kind: "batch"; commands: VerificationCommand[] }
+  | { kind: "patch"; proposalId: string };
 
 let toastCounter = 0;
 
@@ -53,6 +61,7 @@ export function Repositories() {
 
   // GitHub state
   const [integration, setIntegration] = useState<GitHubIntegration | null>(null);
+  const [githubEvidence, setGitHubEvidence] = useState<GitHubEvidence | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   // Verification state
@@ -91,6 +100,9 @@ export function Repositories() {
 
   // Toast state
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [approvalRequests, setApprovalRequests] = useState<PermissionRequest[]>([]);
+  const [approvalAction, setApprovalAction] = useState<PendingApprovalAction | null>(null);
+  const [approvalBusy, setApprovalBusy] = useState(false);
 
   // Profiles cache for filter/sort
   const [profileCache, setProfileCache] = useState<Record<string, RepoProfile | null>>({});
@@ -111,17 +123,12 @@ export function Repositories() {
     try {
       setLoading(true);
       setError(null);
-      const repoList = await listRepositories();
+      const summaries = await listRepositorySummaries();
+      const repoList = summaries.map((summary) => summary.repository);
       setRepos(repoList);
-      // Load profiles for filter/sort
-      const cache: Record<string, RepoProfile | null> = {};
-      for (const repo of repoList) {
-        try {
-          cache[repo.id] = await getRepoProfile(repo.id);
-        } catch {
-          cache[repo.id] = null;
-        }
-      }
+      const cache = Object.fromEntries(
+        summaries.map((summary) => [summary.repository.id, summary.profile]),
+      );
       setProfileCache(cache);
     } catch (e: any) {
       setError(e?.toString() ?? "Failed to load repositories");
@@ -137,6 +144,7 @@ export function Repositories() {
       setSnapshot(null);
       setFindings([]);
       setIntegration(null);
+      setGitHubEvidence(null);
       setCommands([]);
       setVerifyResult(null);
       setVerifyRuns([]);
@@ -152,6 +160,7 @@ export function Repositories() {
     setSnapshot(null);
     setFindings([]);
     setIntegration(null);
+    setGitHubEvidence(null);
     setCommands([]);
     setVerifyResult(null);
     setVerifyRuns([]);
@@ -177,8 +186,14 @@ export function Repositories() {
         }
         case "github":
           try {
-            setIntegration(await resolveGitHubRepo(repoId));
-          } catch { setIntegration(null); }
+            const resolved = await getGitHubIntegration(repoId)
+              ?? await resolveGitHubRepo(repoId);
+            setIntegration(resolved);
+            setGitHubEvidence(await getGitHubEvidence(repoId));
+          } catch {
+            setIntegration(null);
+            setGitHubEvidence(null);
+          }
           break;
         case "verify": {
           const repo = repos.find(r => r.id === repoId);
@@ -241,6 +256,7 @@ export function Repositories() {
     try {
       setSyncing(true);
       const result = await syncGitHub(selectedRepoId);
+      setGitHubEvidence(await getGitHubEvidence(selectedRepoId));
       showToast(`GitHub synced: ${JSON.stringify(result)}`, "success");
     } catch (e: any) {
       setError(e?.toString() ?? "GitHub sync failed");
@@ -252,42 +268,105 @@ export function Repositories() {
   async function handleRunVerification(cmd: VerificationCommand) {
     if (!selectedRepo) return;
     try {
-      setRunningCmd(cmd.command);
-      setVerifyResult(null);
-      const result = await runVerification(cmd.command, selectedRepo.worktreePath, selectedRepo.id);
-      setVerifyResult(result);
-      try { setVerifyRuns(await listVerificationRuns(selectedRepo.id)); } catch { /* ignore */ }
+      const request = await requestVerificationApproval(
+        selectedRepo.id,
+        selectedRepo.worktreePath,
+        cmd.command,
+      );
+      setApprovalRequests([request]);
+      setApprovalAction({ kind: "verification", command: cmd });
     } catch (e: any) {
-      setError(e?.toString() ?? "Verification failed");
-    } finally {
-      setRunningCmd(null);
+      setError(e?.toString() ?? "Could not prepare verification approval");
     }
   }
 
   async function handleBatchVerification() {
     if (!selectedRepo) return;
-    const automaticCommands = commands.filter(
-      (command) => command.riskLevel !== "high" && command.riskLevel !== "critical",
-    );
-    if (automaticCommands.length === 0) {
-      showToast("No automatically approved verification commands are available", "info");
+    const selectedCommands = commands.filter((command) => command.category !== "install");
+    if (selectedCommands.length === 0) {
+      showToast("No non-install verification commands are available", "info");
       return;
     }
     try {
-      setBatchRunning(true);
-      await runBatchVerification(automaticCommands, selectedRepo.worktreePath, selectedRepo.id);
-      try { setVerifyRuns(await listVerificationRuns(selectedRepo.id)); } catch { /* ignore */ }
-      showToast(`Batch verification complete (${automaticCommands.length} commands)`, "success");
+      const requests = await Promise.all(
+        selectedCommands.map((command) =>
+          requestVerificationApproval(
+            selectedRepo.id,
+            selectedRepo.worktreePath,
+            command.command,
+          ),
+        ),
+      );
+      setApprovalRequests(requests);
+      setApprovalAction({ kind: "batch", commands: selectedCommands });
     } catch (e: any) {
-      setError(e?.toString() ?? "Batch verification failed");
-    } finally {
-      setBatchRunning(false);
+      setError(e?.toString() ?? "Could not prepare batch approval");
     }
   }
 
   async function handleApplyPatch(id: string) {
-    try { await applyPatch(id); if (selectedRepoId) setPatches(await listPatchProposals(selectedRepoId)); showToast("Patch applied", "success"); }
-    catch (e: any) { setError(e?.toString() ?? "Apply failed"); showToast("Apply failed", "error"); }
+    try {
+      const request = await requestPatchApproval(id);
+      setApprovalRequests([request]);
+      setApprovalAction({ kind: "patch", proposalId: id });
+    } catch (e: any) {
+      setError(e?.toString() ?? "Could not prepare patch approval");
+      showToast("Patch approval could not be prepared", "error");
+    }
+  }
+
+  async function denyPendingApproval() {
+    const requests = approvalRequests;
+    setApprovalRequests([]);
+    setApprovalAction(null);
+    await Promise.allSettled(
+      requests.map((request) => decidePermissionRequest(request.id, false)),
+    );
+  }
+
+  async function approvePendingAction() {
+    if (!approvalAction || !selectedRepo) return;
+    setApprovalBusy(true);
+    try {
+      const approved = await Promise.all(
+        approvalRequests.map((request) => decidePermissionRequest(request.id, true)),
+      );
+      if (approvalAction.kind === "verification") {
+        setRunningCmd(approvalAction.command.command);
+        setVerifyResult(null);
+        const result = await runVerification(
+          approvalAction.command.command,
+          selectedRepo.worktreePath,
+          selectedRepo.id,
+          approved[0].id,
+        );
+        setVerifyResult(result);
+        setVerifyRuns(await listVerificationRuns(selectedRepo.id));
+      } else if (approvalAction.kind === "batch") {
+        setBatchRunning(true);
+        await runBatchVerification(
+          approvalAction.commands,
+          selectedRepo.worktreePath,
+          selectedRepo.id,
+          approved.map((request) => request.id),
+        );
+        setVerifyRuns(await listVerificationRuns(selectedRepo.id));
+        showToast(`Batch verification complete (${approvalAction.commands.length} commands)`, "success");
+      } else {
+        await applyPatch(approvalAction.proposalId, approved[0].id);
+        setPatches(await listPatchProposals(selectedRepo.id));
+        showToast("Patch applied after isolated verification", "success");
+      }
+      setApprovalRequests([]);
+      setApprovalAction(null);
+    } catch (e: any) {
+      setError(e?.toString() ?? "Approved operation failed");
+      showToast("Approved operation failed", "error");
+    } finally {
+      setRunningCmd(null);
+      setBatchRunning(false);
+      setApprovalBusy(false);
+    }
   }
 
   async function handleRejectPatch(id: string) {
@@ -305,7 +384,10 @@ export function Repositories() {
     try {
       setReindexing(true);
       const stats = await reindexRepo(selectedRepoId);
-      showToast(`Reindexed: ${stats.documents} documents, ${stats.chunks} chunks`, "success");
+      showToast(
+        `Index updated: ${stats.indexedDocuments} changed, ${stats.skippedDocuments} unchanged`,
+        "success",
+      );
     } catch (e: any) {
       showToast("Reindex failed: " + (e?.toString() ?? "unknown error"), "error");
     } finally {
@@ -749,6 +831,7 @@ export function Repositories() {
                 {activeTab === "github" && (
                   <GitHubTab
                     integration={integration}
+                    evidence={githubEvidence}
                     syncing={syncing}
                     onSync={handleSyncGitHub}
                   />
@@ -776,6 +859,14 @@ export function Repositories() {
             </div>
           )}
         </div>
+      )}
+      {approvalAction && approvalRequests.length > 0 && (
+        <ApprovalModal
+          requests={approvalRequests}
+          busy={approvalBusy}
+          onApprove={approvePendingAction}
+          onDeny={denyPendingApproval}
+        />
       )}
     </div>
   );
@@ -1337,8 +1428,11 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
 
 // --- GitHub Tab ---
 
-function GitHubTab({ integration, syncing, onSync }: {
-  integration: GitHubIntegration | null; syncing: boolean; onSync: () => void;
+function GitHubTab({ integration, evidence, syncing, onSync }: {
+  integration: GitHubIntegration | null;
+  evidence: GitHubEvidence | null;
+  syncing: boolean;
+  onSync: () => void;
 }) {
   if (!integration) {
     return (
@@ -1379,7 +1473,72 @@ function GitHubTab({ integration, syncing, onSync }: {
         <RefreshCw size={14} />
         {syncing ? "Syncing..." : "Sync GitHub Data"}
       </button>
+
+      {evidence && (
+        <div style={{ marginTop: 16, display: "grid", gap: 16 }}>
+          {evidence.syncErrors.length > 0 && (
+            <div style={{ padding: 10, borderLeft: "3px solid #dc2626", background: "#fef2f2", color: "#991b1b", fontSize: 11 }}>
+              {evidence.syncErrors.join("; ")}
+            </div>
+          )}
+          <GitHubEvidenceList
+            title="Workflow runs"
+            items={evidence.workflowRuns.slice(0, 6).map((run) => ({
+              id: run.id,
+              label: run.workflowName,
+              meta: [run.branch, run.conclusion ?? run.status].filter(Boolean).join(" · "),
+              url: run.url,
+            }))}
+          />
+          <GitHubEvidenceList
+            title="Pull requests"
+            items={evidence.pullRequests.slice(0, 6).map((pr) => ({
+              id: pr.id,
+              label: `#${pr.prNumber} ${pr.title}`,
+              meta: [pr.state, pr.author].filter(Boolean).join(" · "),
+              url: pr.url,
+            }))}
+          />
+          <GitHubEvidenceList
+            title="Releases"
+            items={evidence.releases.slice(0, 6).map((release) => ({
+              id: release.id,
+              label: release.tagName,
+              meta: [release.name, release.isDraft ? "draft" : null].filter(Boolean).join(" · "),
+              url: release.url,
+            }))}
+          />
+        </div>
+      )}
     </>
+  );
+}
+
+function GitHubEvidenceList({ title, items }: {
+  title: string;
+  items: Array<{ id: string; label: string; meta: string; url: string | null }>;
+}) {
+  return (
+    <section>
+      <h4 style={{ margin: "0 0 6px", fontSize: 12, color: "#334155" }}>{title}</h4>
+      {items.length === 0 ? (
+        <p style={{ margin: 0, fontSize: 11, color: "#94a3b8" }}>No synced records.</p>
+      ) : (
+        <div style={{ borderTop: "1px solid #e2e8f0" }}>
+          {items.map((item) => (
+            <div key={item.id} style={{ padding: "7px 0", borderBottom: "1px solid #e2e8f0" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, fontWeight: 600, color: "#334155" }}>
+                  {item.label}
+                </span>
+                {item.url && <ExternalLink size={12} color="#64748b" aria-label={item.url} />}
+              </div>
+              {item.meta && <div style={{ marginTop: 2, fontSize: 10, color: "#94a3b8" }}>{item.meta}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1404,9 +1563,7 @@ function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, on
   result: VerificationResult | null; onRun: (cmd: VerificationCommand) => void;
   runs: VerificationRun[]; batchRunning: boolean; onBatchRun: () => void;
 }) {
-  const automaticCommandCount = commands.filter(
-    (command) => command.riskLevel !== "high" && command.riskLevel !== "critical",
-  ).length;
+  const batchCommandCount = commands.filter((command) => command.category !== "install").length;
 
   return (
     <>
@@ -1418,24 +1575,23 @@ function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, on
             <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{commands.length} command(s) detected</span>
             <button
               onClick={onBatchRun}
-              disabled={batchRunning || automaticCommandCount === 0}
-              title="Runs only low- and medium-risk commands"
+              disabled={batchRunning || batchCommandCount === 0}
+              title="Review and run all detected non-install checks"
               style={{
                 display: "flex", alignItems: "center", gap: 4, padding: "4px 10px",
                 background: "#eff6ff", color: "#1e40af", border: "1px solid #bfdbfe",
                 borderRadius: 4,
-                cursor: batchRunning || automaticCommandCount === 0 ? "not-allowed" : "pointer",
+                cursor: batchRunning || batchCommandCount === 0 ? "not-allowed" : "pointer",
                 fontSize: 12,
-                opacity: batchRunning || automaticCommandCount === 0 ? 0.6 : 1,
+                opacity: batchRunning || batchCommandCount === 0 ? 0.6 : 1,
               }}
             >
               <Play size={12} />
-              {batchRunning ? "Running checks..." : `Run Approved (${automaticCommandCount})`}
+              {batchRunning ? "Running checks..." : `Review & Run (${batchCommandCount})`}
             </button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
             {commands.map((cmd) => {
-              const requiresApproval = cmd.riskLevel === "high" || cmd.riskLevel === "critical";
               return (
               <div key={cmd.command} style={{ padding: 10, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
@@ -1447,19 +1603,18 @@ function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, on
                 </div>
                 <button
                   onClick={() => onRun(cmd)}
-                  disabled={runningCmd === cmd.command || requiresApproval}
-                  title={requiresApproval ? "Approval flow is not implemented yet" : `Run ${cmd.command}`}
+                  disabled={runningCmd === cmd.command}
+                  title={`Review and run ${cmd.command}`}
                   style={{
                     display: "flex", alignItems: "center", gap: 4, padding: "4px 10px",
                     background: "#f0f9ff", color: "#0369a1", border: "1px solid #bae6fd",
                     borderRadius: 4,
-                    cursor: runningCmd === cmd.command || requiresApproval ? "not-allowed" : "pointer",
+                    cursor: runningCmd === cmd.command ? "not-allowed" : "pointer",
                     fontSize: 12,
-                    opacity: requiresApproval ? 0.55 : 1,
                   }}
                 >
                   <Play size={12} />
-                  {runningCmd === cmd.command ? "Running..." : requiresApproval ? "Approval required" : "Run"}
+                  {runningCmd === cmd.command ? "Running..." : "Review & Run"}
                 </button>
               </div>
               );

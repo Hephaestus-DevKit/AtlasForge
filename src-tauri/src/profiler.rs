@@ -128,12 +128,11 @@ fn detect_languages(files: &HashSet<String>, path: &Path) -> Vec<String> {
         .any(|f| f.ends_with(".kt") || f == "build.gradle.kts")
     {
         // Check for .kt files in src
-        if path.join("src").join("main").join("kotlin").exists()
-            || files.iter().any(|f| f.contains(".kt"))
+        if (path.join("src").join("main").join("kotlin").exists()
+            || files.iter().any(|f| f.contains(".kt")))
+            && !languages.contains(&"Java".into())
         {
-            if !languages.contains(&"Java".into()) {
-                languages.push("Kotlin".into());
-            }
+            languages.push("Kotlin".into());
         }
     }
 
@@ -364,10 +363,8 @@ fn detect_frameworks(files: &HashSet<String>, path: &Path, languages: &[String])
             if cargo_content.contains("tokio") {
                 frameworks.push("Tokio".into());
             }
-            if cargo_content.contains("tauri") {
-                if !frameworks.contains(&"Tauri".into()) {
-                    frameworks.push("Tauri".into());
-                }
+            if cargo_content.contains("tauri") && !frameworks.contains(&"Tauri".into()) {
+                frameworks.push("Tauri".into());
             }
             if cargo_content.contains("wasm-bindgen") || cargo_content.contains("yew") {
                 frameworks.push("Yew/WASM".into());

@@ -7,15 +7,19 @@ use crate::github;
 use crate::indexer;
 use crate::job_engine;
 use crate::models::*;
+use crate::permissions;
 use crate::profiler;
 use crate::scanner::{self, scan_root};
 use crate::security;
 use crate::tool_broker;
 use crate::verification;
+use std::sync::Arc;
 use tauri::State;
 
+#[derive(Clone)]
 pub struct AppState {
-    pub db: Db,
+    pub db: Arc<Db>,
+    pub jobs: Arc<job_engine::JobRuntime>,
 }
 
 // --- Greeting (test IPC) ---
@@ -29,7 +33,11 @@ pub fn greet(name: &str) -> String {
 
 #[tauri::command]
 pub fn list_workspace_roots(state: State<AppState>) -> Result<Vec<WorkspaceRoot>, String> {
-    let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
+    load_workspace_roots(&state.db)
+}
+
+fn load_workspace_roots(db: &Db) -> Result<Vec<WorkspaceRoot>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, path, label, access_mode, scan_enabled, include_globs, exclude_globs, created_at, last_scanned_at FROM workspace_root ORDER BY created_at")
         .map_err(|e| e.to_string())?;
@@ -278,6 +286,93 @@ pub fn list_repositories(state: State<AppState>) -> Result<Vec<Repository>, Stri
 }
 
 #[tauri::command]
+pub fn list_repository_summaries(state: State<AppState>) -> Result<Vec<RepositorySummary>, String> {
+    let conn = state.db.conn.lock().map_err(|error| error.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT
+                r.id, r.asset_id, r.worktree_path, r.git_dir_path, r.is_bare, r.is_worktree,
+                r.default_branch, r.current_branch, r.head_sha, r.remote_origin_url,
+                r.dirty_state, r.ahead_behind, r.last_commit_at,
+                p.id, p.languages, p.frameworks, p.package_managers, p.scripts,
+                p.ci_systems, p.has_readme, p.has_license, p.license_type, p.detected_at,
+                (SELECT score FROM repo_health_snapshot h
+                 WHERE h.repo_id = r.id ORDER BY h.created_at DESC LIMIT 1),
+                (SELECT success FROM verification_run v
+                 WHERE v.repo_id = r.id ORDER BY v.created_at DESC LIMIT 1)
+             FROM repository r
+             LEFT JOIN repo_profile p ON p.repo_id = r.id
+             ORDER BY r.worktree_path",
+        )
+        .map_err(|error| error.to_string())?;
+    let summaries = stmt
+        .query_map([], |row| {
+            let ahead_behind = row
+                .get::<_, Option<String>>(11)?
+                .as_deref()
+                .and_then(|value| serde_json::from_str(value).ok());
+            let profile_id: Option<String> = row.get(13)?;
+            let profile = profile_id.map(|id| RepoProfile {
+                id,
+                repo_id: row.get(0).unwrap_or_default(),
+                languages: row
+                    .get::<_, String>(14)
+                    .ok()
+                    .and_then(|value| serde_json::from_str(&value).ok())
+                    .unwrap_or_default(),
+                frameworks: row
+                    .get::<_, String>(15)
+                    .ok()
+                    .and_then(|value| serde_json::from_str(&value).ok())
+                    .unwrap_or_default(),
+                package_managers: row
+                    .get::<_, String>(16)
+                    .ok()
+                    .and_then(|value| serde_json::from_str(&value).ok())
+                    .unwrap_or_default(),
+                scripts: row
+                    .get::<_, String>(17)
+                    .ok()
+                    .and_then(|value| serde_json::from_str(&value).ok())
+                    .unwrap_or_default(),
+                ci_systems: row
+                    .get::<_, String>(18)
+                    .ok()
+                    .and_then(|value| serde_json::from_str(&value).ok())
+                    .unwrap_or_default(),
+                has_readme: row.get::<_, i32>(19).unwrap_or_default() != 0,
+                has_license: row.get::<_, i32>(20).unwrap_or_default() != 0,
+                license_type: row.get(21).ok().flatten(),
+                detected_at: row.get(22).unwrap_or_default(),
+            });
+            Ok(RepositorySummary {
+                repository: Repository {
+                    id: row.get(0)?,
+                    asset_id: row.get(1)?,
+                    worktree_path: row.get(2)?,
+                    git_dir_path: row.get(3)?,
+                    is_bare: row.get::<_, i32>(4)? != 0,
+                    is_worktree: row.get::<_, i32>(5)? != 0,
+                    default_branch: row.get(6)?,
+                    current_branch: row.get(7)?,
+                    head_sha: row.get(8)?,
+                    remote_origin_url: row.get(9)?,
+                    dirty_state: row.get::<_, i32>(10)? != 0,
+                    ahead_behind,
+                    last_commit_at: row.get(12)?,
+                },
+                profile,
+                health_score: row.get(23)?,
+                last_verification_success: row.get::<_, Option<i32>>(24)?.map(|value| value != 0),
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(summaries)
+}
+
+#[tauri::command]
 pub fn list_project_assets(
     state: State<AppState>,
     limit: Option<i64>,
@@ -310,8 +405,8 @@ pub fn list_project_assets(
 // --- Job/Scan commands ---
 
 #[tauri::command]
-pub fn start_scan(
-    state: State<AppState>,
+pub async fn start_scan(
+    state: State<'_, AppState>,
     root_ids: Option<Vec<String>>,
 ) -> Result<ScanResult, String> {
     let roots = list_workspace_roots(state.clone())?;
@@ -329,6 +424,7 @@ pub fn start_scan(
     let input = serde_json::to_string(&targets.iter().map(|r| r.id.clone()).collect::<Vec<_>>())
         .unwrap_or_default();
     let job_id = job_engine::create_job("scan", &input, &state.db)?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
 
     job_engine::update_progress(&job_id, 0, targets.len() as i32, &state.db)?;
     job_engine::append_job_event(
@@ -344,6 +440,10 @@ pub fn start_scan(
     let mut errors = Vec::new();
 
     for root in &targets {
+        if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            state.jobs.finish(&job_id);
+            return Err("Scan cancelled by user".into());
+        }
         if !root.scan_enabled {
             roots_skipped += 1;
             job_engine::append_job_event(
@@ -359,7 +459,7 @@ pub fn start_scan(
             )?;
             job_engine::update_progress(
                 &job_id,
-                (roots_scanned + roots_skipped) as i32,
+                roots_scanned + roots_skipped,
                 targets.len() as i32,
                 &state.db,
             )?;
@@ -422,7 +522,7 @@ pub fn start_scan(
 
         job_engine::update_progress(
             &job_id,
-            (roots_scanned + roots_skipped) as i32,
+            roots_scanned + roots_skipped,
             targets.len() as i32,
             &state.db,
         )?;
@@ -430,6 +530,7 @@ pub fn start_scan(
 
     // Mark job as completed via job_engine
     job_engine::complete_job(&job_id, &state.db)?;
+    state.jobs.finish(&job_id);
 
     job_engine::append_job_event(
         &job_id,
@@ -531,6 +632,38 @@ pub fn get_job_events(state: State<AppState>, job_id: String) -> Result<Vec<JobE
     Ok(events)
 }
 
+#[tauri::command]
+pub fn list_audit_log_cmd(
+    state: State<AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<AuditEntry>, String> {
+    let limit = limit.unwrap_or(100).clamp(1, 500);
+    let conn = state.db.conn.lock().map_err(|error| error.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, action, subject, scope, capability, risk_level, detail, created_at
+             FROM audit_log ORDER BY created_at DESC LIMIT ?1",
+        )
+        .map_err(|error| error.to_string())?;
+    let entries = stmt
+        .query_map(rusqlite::params![limit], |row| {
+            Ok(AuditEntry {
+                id: row.get(0)?,
+                action: row.get(1)?,
+                subject: row.get(2)?,
+                scope: row.get(3)?,
+                capability: row.get(4)?,
+                risk_level: row.get(5)?,
+                detail: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(entries)
+}
+
 // --- Repo Profile commands ---
 
 #[tauri::command]
@@ -542,7 +675,7 @@ pub fn get_repo_profile(
 }
 
 #[tauri::command]
-pub fn refresh_profiles(state: State<AppState>) -> Result<usize, String> {
+pub async fn refresh_profiles(state: State<'_, AppState>) -> Result<usize, String> {
     let repos = list_repositories(state.clone())?;
     let mut refreshed = 0;
 
@@ -575,17 +708,151 @@ pub fn list_repo_profiles_cmd(state: State<AppState>) -> Result<Vec<RepoProfile>
 
 #[tauri::command]
 pub fn cancel_job_cmd(state: State<AppState>, job_id: String) -> Result<Job, String> {
-    job_engine::cancel_job(&job_id, &state.db)
+    job_engine::cancel_job(&job_id, &state.db, &state.jobs)
 }
 
 #[tauri::command]
 pub fn retry_job_cmd(state: State<AppState>, job_id: String) -> Result<Job, String> {
-    job_engine::retry_job(&job_id, &state.db)
+    let original = job_engine::load_job(&job_id, &state.db)?;
+    if !matches!(
+        original.job_type.as_str(),
+        "scan" | "reindex" | "audit" | "github_sync"
+    ) {
+        return Err(format!(
+            "Jobs of type '{}' require fresh input or approval and must be restarted from their feature page",
+            original.job_type
+        ));
+    }
+    let retried = job_engine::retry_job(&job_id, &state.db)?;
+    let state = state.inner().clone();
+    let queued_job = retried.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = dispatch_queued_job(&queued_job, &state);
+    });
+    Ok(retried)
 }
 
 #[tauri::command]
 pub fn get_job_detail(state: State<AppState>, job_id: String) -> Result<Job, String> {
     job_engine::load_job(&job_id, &state.db)
+}
+
+fn dispatch_queued_job(job: &Job, state: &AppState) -> Result<(), String> {
+    let cancellation = job_engine::begin_job(&job.id, &state.db, &state.jobs)?;
+    let result = match job.job_type.as_str() {
+        "scan" => {
+            let root_ids: Vec<String> =
+                serde_json::from_str(&job.input).map_err(|error| error.to_string())?;
+            let roots = load_workspace_roots(&state.db)?;
+            let targets = roots
+                .into_iter()
+                .filter(|root| root_ids.contains(&root.id))
+                .collect::<Vec<_>>();
+            job_engine::update_progress(&job.id, 0, targets.len() as i32, &state.db)?;
+            for (index, root) in targets.iter().enumerate() {
+                if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Ok(());
+                }
+                if root.scan_enabled {
+                    let (_, errors) = scan_root(root, &state.db);
+                    if !errors.is_empty() {
+                        scanner::persist_scan_errors(&errors, Some(&job.id), &state.db)?;
+                    }
+                }
+                job_engine::update_progress(
+                    &job.id,
+                    (index + 1) as i32,
+                    targets.len() as i32,
+                    &state.db,
+                )?;
+            }
+            Ok(())
+        }
+        "reindex" => {
+            let repo_id = job_input_string(&job.input, "repoId")?;
+            let path = repository_path(&repo_id, &state.db)?;
+            indexer::index_repo(&repo_id, &path, &state.db).map(|_| ())
+        }
+        "audit" => {
+            let repo_id = job_input_string(&job.input, "repoId")?;
+            let path = repository_path(&repo_id, &state.db)?;
+            auditor::audit_repo(&repo_id, &path, None, &state.db).map(|_| ())
+        }
+        "github_sync" => {
+            let repo_id = job_input_string(&job.input, "repoId")?;
+            let integration = github::load_integration(&repo_id, &state.db)?
+                .ok_or_else(|| "GitHub integration is no longer available".to_string())?;
+            github::sync_workflow_runs(&integration, &state.db)?;
+            github::sync_prs(&integration, &state.db)?;
+            github::sync_releases(&integration, &state.db)?;
+            Ok(())
+        }
+        _ => Err(format!("Unsupported queued job type: {}", job.job_type)),
+    };
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        state.jobs.finish(&job.id);
+        return Ok(());
+    }
+    match result {
+        Ok(()) => job_engine::complete_job(&job.id, &state.db)?,
+        Err(ref error) => job_engine::fail_job(&job.id, error, &state.db)?,
+    }
+    state.jobs.finish(&job.id);
+    result
+}
+
+fn job_input_string(input: &str, key: &str) -> Result<String, String> {
+    serde_json::from_str::<serde_json::Value>(input)
+        .map_err(|error| error.to_string())?
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("Job input is missing '{}'", key))
+}
+
+fn repository_path(repo_id: &str, db: &Db) -> Result<String, String> {
+    let conn = db.conn.lock().map_err(|error| error.to_string())?;
+    conn.query_row(
+        "SELECT worktree_path FROM repository WHERE id = ?1",
+        rusqlite::params![repo_id],
+        |row| row.get(0),
+    )
+    .map_err(|error| format!("Repository not found: {}", error))
+}
+
+#[tauri::command]
+pub fn request_verification_approval_cmd(
+    state: State<AppState>,
+    repo_id: String,
+    cwd: String,
+    command: String,
+) -> Result<permissions::PermissionRequest, String> {
+    permissions::request_verification(&repo_id, &cwd, &command, &state.db)
+}
+
+#[tauri::command]
+pub fn request_patch_approval_cmd(
+    state: State<AppState>,
+    proposal_id: String,
+) -> Result<permissions::PermissionRequest, String> {
+    permissions::request_patch(&proposal_id, &state.db)
+}
+
+#[tauri::command]
+pub fn decide_permission_request_cmd(
+    state: State<AppState>,
+    request_id: String,
+    approved: bool,
+) -> Result<permissions::PermissionRequest, String> {
+    permissions::decide_request(&request_id, approved, &state.db)
+}
+
+#[tauri::command]
+pub fn list_permission_requests_cmd(
+    state: State<AppState>,
+    status: Option<String>,
+) -> Result<Vec<permissions::PermissionRequest>, String> {
+    permissions::list_requests(status.as_deref(), &state.db)
 }
 
 // --- Tool Broker commands ---
@@ -637,8 +904,8 @@ pub fn list_documents_cmd(
 }
 
 #[tauri::command]
-pub fn reindex_repo_cmd(
-    state: State<AppState>,
+pub async fn reindex_repo_cmd(
+    state: State<'_, AppState>,
     repo_id: String,
 ) -> Result<indexer::IndexStats, String> {
     // Get worktree path
@@ -658,6 +925,10 @@ pub fn reindex_repo_cmd(
         &serde_json::json!({"repoId": repo_id}).to_string(),
         &state.db,
     )?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Reindex cancelled by user".into());
+    }
 
     job_engine::append_job_event(
         &job_id,
@@ -669,6 +940,7 @@ pub fn reindex_repo_cmd(
     match indexer::index_repo(&repo_id, &worktree_path, &state.db) {
         Ok(stats) => {
             job_engine::complete_job(&job_id, &state.db)?;
+            state.jobs.finish(&job_id);
             job_engine::append_job_event(
                 &job_id,
                 "reindex_completed",
@@ -694,6 +966,7 @@ pub fn reindex_repo_cmd(
         }
         Err(e) => {
             job_engine::fail_job(&job_id, &e, &state.db)?;
+            state.jobs.finish(&job_id);
             Err(e)
         }
     }
@@ -702,8 +975,8 @@ pub fn reindex_repo_cmd(
 // --- Auditor commands ---
 
 #[tauri::command]
-pub fn audit_repo_cmd(
-    state: State<AppState>,
+pub async fn audit_repo_cmd(
+    state: State<'_, AppState>,
     repo_id: String,
 ) -> Result<auditor::HealthSnapshot, String> {
     let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
@@ -722,6 +995,10 @@ pub fn audit_repo_cmd(
         &serde_json::json!({"repoId": repo_id}).to_string(),
         &state.db,
     )?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Audit cancelled by user".into());
+    }
 
     job_engine::append_job_event(
         &job_id,
@@ -733,6 +1010,7 @@ pub fn audit_repo_cmd(
     match auditor::audit_repo(&repo_id, &worktree_path, None, &state.db) {
         Ok(snapshot) => {
             job_engine::complete_job(&job_id, &state.db)?;
+            state.jobs.finish(&job_id);
             job_engine::append_job_event(
                 &job_id,
                 "audit_completed",
@@ -754,6 +1032,7 @@ pub fn audit_repo_cmd(
         }
         Err(e) => {
             job_engine::fail_job(&job_id, &e, &state.db)?;
+            state.jobs.finish(&job_id);
             Err(e)
         }
     }
@@ -803,6 +1082,18 @@ pub fn delete_ai_provider_cmd(state: State<AppState>, id: String) -> Result<(), 
 }
 
 #[tauri::command]
+pub async fn probe_ai_provider_cmd(
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<ai_provider::ProviderProbe, String> {
+    let provider = ai_provider::list_providers(&state.db)?
+        .into_iter()
+        .find(|provider| provider.id == provider_id)
+        .ok_or_else(|| format!("Provider not found: {}", provider_id))?;
+    Ok(ai_provider::probe_provider(&provider).await)
+}
+
+#[tauri::command]
 pub async fn call_ai_cmd(
     state: State<'_, AppState>,
     provider_id: String,
@@ -833,6 +1124,7 @@ pub async fn call_ai_cmd(
         &serde_json::json!({"providerId": provider_id}).to_string(),
         &state.db,
     )?;
+    let _cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
 
     job_engine::append_job_event(
         &job_id,
@@ -844,11 +1136,13 @@ pub async fn call_ai_cmd(
     match ai_provider::call_ai(&provider, &prompt, model.as_deref()).await {
         Ok(response) => {
             job_engine::complete_job(&job_id, &state.db)?;
+            state.jobs.finish(&job_id);
             job_engine::append_job_event(&job_id, "ai_call_completed", &serde_json::json!({"tokensIn": response.tokens_in, "tokensOut": response.tokens_out}).to_string(), &state.db)?;
             Ok(response)
         }
         Err(e) => {
             job_engine::fail_job(&job_id, &e, &state.db)?;
+            state.jobs.finish(&job_id);
             Err(e)
         }
     }
@@ -873,16 +1167,26 @@ pub fn list_patch_proposals_cmd(
 }
 
 #[tauri::command]
-pub fn apply_patch_cmd(
-    state: State<AppState>,
+pub async fn apply_patch_cmd(
+    state: State<'_, AppState>,
     proposal_id: String,
+    approval_id: String,
 ) -> Result<ai_fix::PatchProposal, String> {
+    let (repo_id, context_hash) = permissions::current_patch_context_hash(&proposal_id, &state.db)?;
+    permissions::consume_request(
+        &approval_id,
+        "fs.write_patch",
+        Some(&repo_id),
+        &context_hash,
+        &state.db,
+    )?;
     // Create a job
     let job_id = job_engine::create_job(
         "patch_apply",
         &serde_json::json!({"proposalId": proposal_id}).to_string(),
         &state.db,
     )?;
+    let _cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
 
     job_engine::append_job_event(
         &job_id,
@@ -894,6 +1198,7 @@ pub fn apply_patch_cmd(
     match ai_fix::apply_patch(&proposal_id, &state.db) {
         Ok(proposal) => {
             job_engine::complete_job(&job_id, &state.db)?;
+            state.jobs.finish(&job_id);
             job_engine::append_job_event(
                 &job_id,
                 "patch_apply_completed",
@@ -904,6 +1209,7 @@ pub fn apply_patch_cmd(
         }
         Err(e) => {
             job_engine::fail_job(&job_id, &e, &state.db)?;
+            state.jobs.finish(&job_id);
             Err(e)
         }
     }
@@ -1021,8 +1327,24 @@ pub fn resolve_github_repo_cmd(
 }
 
 #[tauri::command]
-pub fn sync_github_cmd(
+pub fn get_github_evidence_cmd(
     state: State<AppState>,
+    repo_id: String,
+) -> Result<github::GitHubEvidence, String> {
+    github::load_evidence(&repo_id, &state.db)
+}
+
+#[tauri::command]
+pub fn get_github_integration_cmd(
+    state: State<AppState>,
+    repo_id: String,
+) -> Result<Option<github::GitHubIntegration>, String> {
+    github::load_integration(&repo_id, &state.db)
+}
+
+#[tauri::command]
+pub async fn sync_github_cmd(
+    state: State<'_, AppState>,
     repo_id: String,
 ) -> Result<serde_json::Value, String> {
     let integration = github::load_integration(&repo_id, &state.db)?
@@ -1034,6 +1356,7 @@ pub fn sync_github_cmd(
         &serde_json::json!({"repoId": repo_id}).to_string(),
         &state.db,
     )?;
+    let _cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
 
     job_engine::append_job_event(
         &job_id,
@@ -1049,7 +1372,9 @@ pub fn sync_github_cmd(
         Ok((workflows.len(), prs.len(), releases.len()))
     })() {
         Ok((wf_count, pr_count, rel_count)) => {
+            github::set_sync_errors(&integration.id, &[], &state.db)?;
             job_engine::complete_job(&job_id, &state.db)?;
+            state.jobs.finish(&job_id);
             job_engine::append_job_event(
                 &job_id,
                 "github_sync_completed",
@@ -1078,7 +1403,9 @@ pub fn sync_github_cmd(
             }))
         }
         Err(e) => {
+            let _ = github::set_sync_errors(&integration.id, std::slice::from_ref(&e), &state.db);
             job_engine::fail_job(&job_id, &e, &state.db)?;
+            state.jobs.finish(&job_id);
             Err(e)
         }
     }
@@ -1282,11 +1609,12 @@ fn resolve_verification_repo(
 }
 
 #[tauri::command]
-pub fn run_verification_cmd(
-    state: State<AppState>,
+pub async fn run_verification_cmd(
+    state: State<'_, AppState>,
     command: String,
     cwd: String,
     repo_id: Option<String>,
+    approval_id: String,
 ) -> Result<verification::VerificationResult, String> {
     let roots = list_workspace_roots(state.clone())?;
     let cwd_path = std::path::Path::new(&cwd);
@@ -1298,12 +1626,24 @@ pub fn run_verification_cmd(
     })?;
 
     if !cwd_path.is_dir() {
-        return Err(format!("Verification directory is not a directory: {}", cwd));
+        return Err(format!(
+            "Verification directory is not a directory: {}",
+            cwd
+        ));
     }
 
     let command_meta = verification::resolve_command(&cwd, &command)?;
-    verification::ensure_automatic_command_allowed(&command_meta)?;
     let resolved_repo_id = resolve_verification_repo(&state, &cwd, repo_id.as_deref())?;
+    let resolved_repo_id = resolved_repo_id
+        .ok_or_else(|| "Verification requires a registered repository".to_string())?;
+    let context_hash = permissions::verification_context_hash(&cwd, &command_meta)?;
+    permissions::consume_request(
+        &approval_id,
+        "shell.verify",
+        Some(&resolved_repo_id),
+        &context_hash,
+        &state.db,
+    )?;
 
     // Create a job
     let job_id = job_engine::create_job(
@@ -1311,6 +1651,7 @@ pub fn run_verification_cmd(
         &serde_json::json!({"command": command, "cwd": cwd}).to_string(),
         &state.db,
     )?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
 
     job_engine::append_job_event(
         &job_id,
@@ -1321,8 +1662,12 @@ pub fn run_verification_cmd(
 
     let category = command_meta.category.as_str();
     let risk_level = command_meta.risk_level.as_str();
-    let result =
-        verification::run_verification(&command_meta.command, &cwd, command_meta.timeout_secs);
+    let result = verification::run_verification_with_control(
+        &command_meta.command,
+        &cwd,
+        command_meta.timeout_secs,
+        cancellation,
+    );
     let summary = verification::summarize_output(&result);
 
     if result.success {
@@ -1339,9 +1684,10 @@ pub fn run_verification_cmd(
         job_engine::append_job_event(&job_id, "verification_failed",
             &serde_json::json!({"success": false, "exitCode": result.exit_code, "durationMs": result.duration_ms, "summary": summary}).to_string(), &state.db)?;
     }
+    state.jobs.finish(&job_id);
 
     // Persist verification_run record
-    if let Some(rid) = &resolved_repo_id {
+    {
         let run_id = uuid::Uuid::new_v4().to_string();
         let stdout_tail = verification::tail_truncate(&result.stdout, 4000);
         let stderr_tail = verification::tail_truncate(&result.stderr, 4000);
@@ -1351,7 +1697,7 @@ pub fn run_verification_cmd(
             "INSERT INTO verification_run (id, repo_id, job_id, command, cwd, category, risk_level, success, exit_code, duration_ms, timed_out, stdout_tail, stderr_tail, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![
                 run_id,
-                rid,
+                &resolved_repo_id,
                 job_id,
                 command,
                 cwd,
@@ -1387,11 +1733,12 @@ pub fn run_verification_cmd(
 
 /// Run multiple verification commands sequentially.
 #[tauri::command]
-pub fn run_batch_verification_cmd(
-    state: State<AppState>,
+pub async fn run_batch_verification_cmd(
+    state: State<'_, AppState>,
     command_names: Vec<String>,
     cwd: String,
     repo_id: Option<String>,
+    approval_ids: Vec<String>,
 ) -> Result<Vec<verification::VerificationResult>, String> {
     let roots = list_workspace_roots(state.clone())?;
     let cwd_path = std::path::Path::new(&cwd);
@@ -1403,7 +1750,10 @@ pub fn run_batch_verification_cmd(
     })?;
 
     if !cwd_path.is_dir() {
-        return Err(format!("Verification directory is not a directory: {}", cwd));
+        return Err(format!(
+            "Verification directory is not a directory: {}",
+            cwd
+        ));
     }
     if command_names.is_empty() {
         return Err("No verification commands were selected".into());
@@ -1416,11 +1766,25 @@ pub fn run_batch_verification_cmd(
             return Err(format!("Duplicate verification command: {}", command));
         }
         let resolved = verification::resolve_command(&cwd, &command)?;
-        verification::ensure_automatic_command_allowed(&resolved)?;
         commands.push(resolved);
     }
 
     let resolved_repo_id = resolve_verification_repo(&state, &cwd, repo_id.as_deref())?;
+    let resolved_repo_id = resolved_repo_id
+        .ok_or_else(|| "Batch verification requires a registered repository".to_string())?;
+    if approval_ids.len() != commands.len() {
+        return Err("Each verification command requires its own approval".into());
+    }
+    for (command, approval_id) in commands.iter().zip(&approval_ids) {
+        let context_hash = permissions::verification_context_hash(&cwd, command)?;
+        permissions::consume_request(
+            approval_id,
+            "shell.verify",
+            Some(&resolved_repo_id),
+            &context_hash,
+            &state.db,
+        )?;
+    }
     let job_id = job_engine::create_job(
         "verification_batch",
         &serde_json::json!({
@@ -1430,6 +1794,7 @@ pub fn run_batch_verification_cmd(
         .to_string(),
         &state.db,
     )?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
     job_engine::update_progress(&job_id, 0, commands.len() as i32, &state.db)?;
     job_engine::append_job_event(
         &job_id,
@@ -1441,11 +1806,19 @@ pub fn run_batch_verification_cmd(
     let mut results = Vec::new();
 
     for (index, cmd) in commands.iter().enumerate() {
-        let result = verification::run_verification(&cmd.command, &cwd, cmd.timeout_secs);
+        if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        let result = verification::run_verification_with_control(
+            &cmd.command,
+            &cwd,
+            cmd.timeout_secs,
+            cancellation.clone(),
+        );
         results.push(result.clone());
 
         // Persist each run
-        if let Some(rid) = &resolved_repo_id {
+        {
             let run_id = uuid::Uuid::new_v4().to_string();
             let stdout_tail = verification::tail_truncate(&result.stdout, 4000);
             let stderr_tail = verification::tail_truncate(&result.stderr, 4000);
@@ -1455,7 +1828,7 @@ pub fn run_batch_verification_cmd(
                 "INSERT INTO verification_run (id, repo_id, job_id, command, cwd, category, risk_level, success, exit_code, duration_ms, timed_out, stdout_tail, stderr_tail, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 rusqlite::params![
                     run_id,
-                    rid,
+                    &resolved_repo_id,
                     job_id,
                     cmd.command,
                     cwd,
@@ -1493,6 +1866,10 @@ pub fn run_batch_verification_cmd(
         )?;
     }
 
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        state.jobs.finish(&job_id);
+        return Ok(results);
+    }
     let failed_count = results.iter().filter(|result| !result.success).count();
     if failed_count == 0 {
         job_engine::complete_job(&job_id, &state.db)?;
@@ -1503,7 +1880,11 @@ pub fn run_batch_verification_cmd(
             &state.db,
         )?;
     } else {
-        let error = format!("{} of {} verification commands failed", failed_count, results.len());
+        let error = format!(
+            "{} of {} verification commands failed",
+            failed_count,
+            results.len()
+        );
         job_engine::fail_job(&job_id, &error, &state.db)?;
         job_engine::append_job_event(
             &job_id,
@@ -1516,6 +1897,7 @@ pub fn run_batch_verification_cmd(
             &state.db,
         )?;
     }
+    state.jobs.finish(&job_id);
 
     Ok(results)
 }
@@ -1682,8 +2064,8 @@ pub fn write_audit(
 }
 
 fn ensure_github_write_enabled() -> Result<(), String> {
-    match std::env::var("ATLASFORGE_ENABLE_GITHUB_WRITE") {
-        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => Ok(()),
-        _ => Err("GitHub write operations are disabled until the permission review flow is implemented. Set ATLASFORGE_ENABLE_GITHUB_WRITE=1 only for deliberate local testing.".into()),
-    }
+    Err(
+        "GitHub write operations remain disabled until their dedicated preview and approval UI is implemented."
+            .into(),
+    )
 }

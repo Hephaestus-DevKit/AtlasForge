@@ -4,10 +4,11 @@ import {
   detectLocalProviders,
   upsertAiProvider,
   deleteAiProvider,
+  probeAiProvider,
   checkGhAuth,
 } from "../api/ipc";
-import type { AiProvider, GhAuthStatus } from "../types";
-import { Cpu, Github, Plus, Trash2, Wifi, WifiOff, RefreshCw } from "lucide-react";
+import type { AiProvider, GhAuthStatus, ProviderProbe } from "../types";
+import { Cpu, Github, Plus, Trash2, Wifi, WifiOff, RefreshCw, Activity } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { ToastContainer, type ToastMessage } from "../components/Toast";
 
@@ -32,6 +33,8 @@ export function Settings() {
   const [showProviderForm, setShowProviderForm] = useState(false);
   const [form, setForm] = useState<AiProvider>(EMPTY_PROVIDER);
   const [detecting, setDetecting] = useState(false);
+  const [probingProviderId, setProbingProviderId] = useState<string | null>(null);
+  const [providerProbes, setProviderProbes] = useState<Record<string, ProviderProbe>>({});
   const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const toastCounter = useRef(0);
@@ -115,6 +118,19 @@ export function Settings() {
     });
   }
 
+  async function handleProbeProvider(id: string) {
+    try {
+      setProbingProviderId(id);
+      const probe = await probeAiProvider(id);
+      setProviderProbes((current) => ({ ...current, [id]: probe }));
+      showToast(probe.message, probe.reachable ? "success" : "error");
+    } catch (e: any) {
+      setError(e?.toString() ?? "Provider probe failed");
+    } finally {
+      setProbingProviderId(null);
+    }
+  }
+
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Settings</h1>
@@ -125,7 +141,7 @@ export function Settings() {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div className="settings-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         {/* AI Providers */}
         <div style={{ background: "#fff", borderRadius: 8, padding: 20, border: "1px solid #e2e8f0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -257,12 +273,30 @@ export function Settings() {
                       {p.adapterType} · {p.defaultModel} · {p.baseUrl}
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDeleteProvider(p.id)}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444" }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {providerProbes[p.id] && (
+                      <span style={{ fontSize: 10, color: providerProbes[p.id].reachable ? "#166534" : "#991b1b" }}>
+                        {providerProbes[p.id].reachable
+                          ? `${providerProbes[p.id].latencyMs}ms · ${providerProbes[p.id].models.length} models`
+                          : "unreachable"}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => handleProbeProvider(p.id)}
+                      disabled={probingProviderId === p.id}
+                      title="Test provider connection"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#0f766e" }}
+                    >
+                      <Activity size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteProvider(p.id)}
+                      title="Delete provider"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444" }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -287,7 +321,7 @@ export function Settings() {
                 Logged in as <strong>{ghAuth.username}</strong>
               </div>
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
-                You can sync repositories, create PRs, and manage releases from within AtlasForge.
+                Repository metadata can be synced. GitHub write operations remain disabled.
               </div>
             </div>
           ) : (
@@ -330,17 +364,22 @@ export function Settings() {
                 <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
                   <td style={{ padding: "6px 0" }}>github.create_pr</td>
                   <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef3c7", color: "#92400e", fontSize: 11 }}>high</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Requires confirmation</td>
+                  <td style={{ padding: "6px 0", color: "#64748b" }}>Disabled</td>
                 </tr>
                 <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
                   <td style={{ padding: "6px 0" }}>github.create_release</td>
                   <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef2f2", color: "#991b1b", fontSize: 11 }}>critical</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Requires confirmation</td>
+                  <td style={{ padding: "6px 0", color: "#64748b" }}>Disabled</td>
                 </tr>
                 <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "6px 0" }}>fs.write / shell</td>
-                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef2f2", color: "#991b1b", fontSize: 11 }}>critical</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Blocked (dry-run only)</td>
+                  <td style={{ padding: "6px 0" }}>shell.verify</td>
+                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef3c7", color: "#92400e", fontSize: 11 }}>medium</span></td>
+                  <td style={{ padding: "6px 0", color: "#64748b" }}>Single-use approval</td>
+                </tr>
+                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "6px 0" }}>fs.write_patch</td>
+                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef2f2", color: "#991b1b", fontSize: 11 }}>high</span></td>
+                  <td style={{ padding: "6px 0", color: "#64748b" }}>Isolated approval</td>
                 </tr>
               </tbody>
             </table>

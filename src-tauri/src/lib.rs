@@ -8,6 +8,7 @@ mod github;
 mod indexer;
 mod job_engine;
 mod models;
+mod permissions;
 mod profiler;
 mod scanner;
 mod security;
@@ -15,16 +16,29 @@ mod tool_broker;
 mod verification;
 
 use commands::AppState;
+use std::sync::Arc;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let db_path = get_db_path();
-    let db = db::Db::new(&db_path).expect("Failed to initialize database");
-    log::info!("Database initialized at {:?}", db_path);
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState { db })
+        .setup(|app| {
+            let db_path = get_db_path(app.handle())?;
+            migrate_legacy_database(&db_path)?;
+            let db = db::Db::new(&db_path).map_err(std::io::Error::other)?;
+            let recovered =
+                job_engine::recover_interrupted_jobs(&db).map_err(std::io::Error::other)?;
+            if recovered > 0 {
+                log::warn!("Marked {} interrupted jobs as failed", recovered);
+            }
+            log::info!("Database initialized at {:?}", db_path);
+            app.manage(AppState {
+                db: Arc::new(db),
+                jobs: Arc::new(job_engine::JobRuntime::default()),
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::list_workspace_roots,
@@ -32,11 +46,13 @@ pub fn run() {
             commands::remove_workspace_root,
             commands::update_workspace_root,
             commands::list_repositories,
+            commands::list_repository_summaries,
             commands::list_project_assets,
             commands::start_scan,
             commands::list_jobs,
             commands::list_jobs_by_type_cmd,
             commands::get_job_events,
+            commands::list_audit_log_cmd,
             commands::get_repo_profile,
             commands::refresh_profiles,
             commands::list_repo_profiles_cmd,
@@ -44,6 +60,10 @@ pub fn run() {
             commands::cancel_job_cmd,
             commands::retry_job_cmd,
             commands::get_job_detail,
+            commands::request_verification_approval_cmd,
+            commands::request_patch_approval_cmd,
+            commands::decide_permission_request_cmd,
+            commands::list_permission_requests_cmd,
             // Tool broker
             commands::list_tools_cmd,
             commands::invoke_tool_cmd,
@@ -61,6 +81,7 @@ pub fn run() {
             commands::detect_local_providers_cmd,
             commands::upsert_ai_provider_cmd,
             commands::delete_ai_provider_cmd,
+            commands::probe_ai_provider_cmd,
             commands::call_ai_cmd,
             // AI Fix
             commands::list_artifacts_cmd,
@@ -76,6 +97,8 @@ pub fn run() {
             // GitHub
             commands::check_gh_auth_cmd,
             commands::resolve_github_repo_cmd,
+            commands::get_github_evidence_cmd,
+            commands::get_github_integration_cmd,
             commands::sync_github_cmd,
             commands::create_pr_cmd,
             commands::create_release_cmd,
@@ -100,17 +123,32 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn get_db_path() -> std::path::PathBuf {
-    let app_dir = dirs_next();
-    std::path::PathBuf::from(app_dir).join("atlasforge.db")
+fn get_db_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, std::io::Error> {
+    let app_dir = app.path().app_data_dir().map_err(std::io::Error::other)?;
+    std::fs::create_dir_all(&app_dir)?;
+    Ok(app_dir.join("atlasforge.db"))
 }
 
-fn dirs_next() -> String {
-    // Use a simple approach: store in the user's home directory under .atlasforge
+fn migrate_legacy_database(target: &std::path::Path) -> Result<(), std::io::Error> {
+    if target.exists() {
+        return Ok(());
+    }
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".into());
-    let dir = std::path::PathBuf::from(home).join(".atlasforge");
-    std::fs::create_dir_all(&dir).ok();
-    dir.to_string_lossy().to_string()
+    let legacy = std::path::PathBuf::from(home)
+        .join(".atlasforge")
+        .join("atlasforge.db");
+    if legacy.is_file() {
+        std::fs::copy(&legacy, target)?;
+        for suffix in ["-wal", "-shm"] {
+            let source = std::path::PathBuf::from(format!("{}{}", legacy.display(), suffix));
+            let destination = std::path::PathBuf::from(format!("{}{}", target.display(), suffix));
+            if source.is_file() {
+                std::fs::copy(source, destination)?;
+            }
+        }
+        log::info!("Migrated legacy database from {:?}", legacy);
+    }
+    Ok(())
 }
