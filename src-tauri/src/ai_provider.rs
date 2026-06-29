@@ -231,15 +231,13 @@ impl ContextPack {
         self
     }
 
-    /// Build the final prompt, respecting token budget.
-    pub fn build(&self) -> String {
+    pub fn build_body(&self) -> String {
         let mut parts = Vec::new();
-
-        if let Some(ref system) = self.system_prompt {
-            parts.push(system.clone());
-        }
-
-        let used: usize = parts.iter().map(|s| s.split_whitespace().count()).sum();
+        let used = if let Some(ref system) = self.system_prompt {
+            system.split_whitespace().count()
+        } else {
+            0
+        };
         let remaining = self.max_tokens.saturating_sub(used);
 
         let mut budget = remaining;
@@ -267,6 +265,18 @@ impl ContextPack {
             }
         }
 
+        parts.join("\n\n")
+    }
+
+    /// Build the final prompt, respecting token budget.
+    pub fn build(&self) -> String {
+        let mut parts = Vec::new();
+
+        if let Some(ref system) = self.system_prompt {
+            parts.push(system.clone());
+        }
+
+        parts.push(self.build_body());
         parts.join("\n\n")
     }
 }
@@ -359,10 +369,11 @@ pub fn redact_secrets(content: &str) -> String {
     result
 }
 
-/// Call an AI provider (stub: actual HTTP calls would go here).
+/// Call an AI provider.
 pub async fn call_ai(
     provider: &AiProvider,
     prompt: &str,
+    system_prompt: Option<&str>,
     model: Option<&str>,
 ) -> Result<AiResponse, String> {
     validate_base_url(&provider.base_url)?;
@@ -372,9 +383,9 @@ pub async fn call_ai(
     }
 
     match provider.adapter_type.as_str() {
-        "ollama" => call_ollama(&provider.base_url, model, prompt).await,
+        "ollama" => call_ollama(provider, system_prompt, model, prompt).await,
         "openai_compatible" => {
-            call_openai_compatible(&provider.base_url, &provider.api_key_ref, model, prompt).await
+            call_openai_compatible(provider, system_prompt, model, prompt).await
         }
         _ => Err(format!(
             "Unsupported adapter type: {}",
@@ -496,14 +507,34 @@ pub async fn probe_provider(provider: &AiProvider) -> ProviderProbe {
     }
 }
 
-async fn call_ollama(base_url: &str, model: &str, prompt: &str) -> Result<AiResponse, String> {
-    let payload = serde_json::json!({
+async fn call_ollama(
+    provider: &AiProvider,
+    system_prompt: Option<&str>,
+    model: &str,
+    prompt: &str,
+) -> Result<AiResponse, String> {
+    let mut payload = serde_json::json!({
         "model": model,
         "prompt": prompt,
         "stream": false,
     });
+    if let Some(system) = system_prompt {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("system".to_string(), serde_json::json!(system));
+        }
+    }
+    // Merge custom provider.config parameters as options
+    if provider.config.is_object() {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("options".to_string(), provider.config.clone());
+        }
+    }
+
     let response = http_client()?
-        .post(format!("{}/api/generate", base_url.trim_end_matches('/')))
+        .post(format!(
+            "{}/api/generate",
+            provider.base_url.trim_end_matches('/')
+        ))
         .json(&payload)
         .send()
         .await
@@ -534,12 +565,12 @@ async fn call_ollama(base_url: &str, model: &str, prompt: &str) -> Result<AiResp
 }
 
 async fn call_openai_compatible(
-    base_url: &str,
-    api_key_ref: &Option<String>,
+    provider: &AiProvider,
+    system_prompt: Option<&str>,
     model: &str,
     prompt: &str,
 ) -> Result<AiResponse, String> {
-    let api_key = match api_key_ref {
+    let api_key = match &provider.api_key_ref {
         Some(key_ref) => std::env::var(key_ref).map_err(|_| {
             format!(
                 "Environment variable '{}' is not set for this provider",
@@ -553,16 +584,39 @@ async fn call_openai_compatible(
         }
     };
 
-    let payload = serde_json::json!({
+    let mut messages = Vec::new();
+    if let Some(system) = system_prompt {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": system
+        }));
+    }
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": prompt
+    }));
+
+    let mut payload = serde_json::json!({
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "max_tokens": 4096,
     });
+
+    // Merge custom provider.config parameters
+    if let Some(config_obj) = provider.config.as_object() {
+        if let Some(payload_obj) = payload.as_object_mut() {
+            for (k, v) in config_obj {
+                if k != "model" && k != "messages" {
+                    payload_obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
 
     let response = http_client()?
         .post(format!(
             "{}/v1/chat/completions",
-            base_url.trim_end_matches('/')
+            provider.base_url.trim_end_matches('/')
         ))
         .bearer_auth(api_key)
         .json(&payload)
@@ -636,12 +690,18 @@ fn validate_base_url(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))
+static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> Result<&'static reqwest::Client, String> {
+    Ok(CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(120))
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .build()
+            .expect("Failed to build global HTTP client")
+    }))
 }
 
 #[cfg(test)]

@@ -1133,7 +1133,7 @@ pub async fn call_ai_cmd(
         &state.db,
     )?;
 
-    match ai_provider::call_ai(&provider, &prompt, model.as_deref()).await {
+    match ai_provider::call_ai(&provider, &prompt, None, model.as_deref()).await {
         Ok(response) => {
             job_engine::complete_job(&job_id, &state.db)?;
             state.jobs.finish(&job_id);

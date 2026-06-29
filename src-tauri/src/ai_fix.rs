@@ -957,7 +957,8 @@ pub async fn generate_fix_plan(
             &findings_detail.join("\n\n"),
         );
 
-    let prompt = pack.build();
+    let system_prompt = pack.system_prompt.clone();
+    let prompt = pack.build_body();
 
     // 4. Redact secrets from prompt
     let prompt = ai_provider::redact_secrets(&prompt);
@@ -1004,7 +1005,7 @@ pub async fn generate_fix_plan(
     )?;
 
     let outcome = async {
-        let response = ai_provider::call_ai(&provider, &prompt, model)
+        let response = ai_provider::call_ai(&provider, &prompt, system_prompt.as_deref(), model)
             .await
             .map_err(|e| format!("AI call failed: {}", e))?;
         if response.content.trim().is_empty() {
@@ -1181,7 +1182,8 @@ pub async fn propose_fix(
         pack = pack.add_section("Current File Content", tf, &content);
     }
 
-    let prompt = pack.build();
+    let system_prompt = pack.system_prompt.clone();
+    let prompt = pack.build_body();
     let prompt = ai_provider::redact_secrets(&prompt);
 
     // Re-scan for secrets
@@ -1223,7 +1225,7 @@ pub async fn propose_fix(
     )?;
 
     let outcome = async {
-        let response = ai_provider::call_ai(&provider, &prompt, model)
+        let response = ai_provider::call_ai(&provider, &prompt, system_prompt.as_deref(), model)
             .await
             .map_err(|e| format!("AI call failed: {}", e))?;
         if response.content.trim().is_empty() {
