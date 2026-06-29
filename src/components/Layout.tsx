@@ -134,18 +134,17 @@ export function Layout() {
           </button>
         </div>
 
-        {/* Style tag for custom hover behavior that React inline styles cannot do easily */}
         <style>{`
           .sidebar-link-hover:hover {
             color: var(--text-primary) !important;
-            background: rgba(255, 255, 255, 0.03) !important;
+            background: var(--bg-button-secondary) !important;
           }
           .sidebar-link-hover:hover svg {
             color: var(--text-primary) !important;
           }
           .theme-toggle-btn:hover {
             color: var(--text-primary) !important;
-            background: rgba(255, 255, 255, 0.06) !important;
+            background: var(--bg-button-secondary-hover) !important;
             border-color: var(--border-color-hover) !important;
           }
         `}</style>

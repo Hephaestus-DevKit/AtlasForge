@@ -86,7 +86,7 @@ function ToastItem({ toast, onDismiss, duration }: { toast: ToastMessage; onDism
         alignItems: "center",
         gap: 12,
         padding: "12px 16px",
-        background: "rgba(16, 20, 38, 0.85)",
+        background: "var(--bg-card)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         border: style.border,

@@ -229,7 +229,7 @@ export function Assets() {
       )}
 
       {showForm && (
-        <div className="card" style={{ marginBottom: 24, background: "rgba(16, 20, 38, 0.8)" }}>
+        <div className="card" style={{ marginBottom: 24, background: "var(--bg-card)" }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, color: "var(--text-primary)" }}>Add Workspace Root</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             <div>
