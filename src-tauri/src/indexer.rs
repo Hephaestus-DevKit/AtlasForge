@@ -350,6 +350,18 @@ fn collect_indexable_files(root: &Path) -> Vec<(String, String)> {
             if path == root {
                 return true;
             }
+            if path.is_dir() {
+                for component in path.components() {
+                    if let std::path::Component::Normal(os_str) = component {
+                        if let Some(s) = os_str.to_str() {
+                            if EXCLUDED_DIRS.contains(&s) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
             should_index(path)
         })
     {

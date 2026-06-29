@@ -133,40 +133,40 @@ export function Settings() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Settings</h1>
+      <h1 style={{ fontSize: 26, fontWeight: 800, marginBottom: 24, letterSpacing: "-0.025em" }}>Settings</h1>
 
       {error && (
-        <div style={{ padding: 12, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, marginBottom: 16, color: "#991b1b" }}>
+        <div className="badge badge-danger" style={{ display: "block", width: "100%", padding: 12, borderRadius: "var(--radius-sm)", marginBottom: 20, fontSize: 13 }}>
           {error}
         </div>
       )}
 
-      <div className="settings-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div className="settings-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         {/* AI Providers */}
-        <div style={{ background: "#fff", borderRadius: 8, padding: 20, border: "1px solid #e2e8f0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
-              <Cpu size={16} /> AI Providers
+        <div className="card" style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+              <Cpu size={18} color="var(--color-primary)" /> AI Providers
             </h2>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={handleDetect}
                 disabled={detecting}
+                className="btn btn-secondary"
                 style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  padding: "6px 12px", background: "#f0f9ff", color: "#0369a1",
-                  border: "1px solid #bae6fd", borderRadius: 6, cursor: "pointer", fontSize: 13,
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "6px 12px",
                 }}
               >
-                <RefreshCw size={14} />
+                <RefreshCw size={14} className={detecting ? "spin-slow" : ""} />
                 {detecting ? "Detecting..." : "Auto-detect"}
               </button>
               <button
                 onClick={() => setShowProviderForm(!showProviderForm)}
+                className="btn btn-primary"
                 style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  padding: "6px 12px", background: "#3b82f6", color: "#fff",
-                  border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600,
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "6px 12px",
                 }}
               >
                 <Plus size={14} /> Add
@@ -175,20 +175,20 @@ export function Settings() {
           </div>
 
           {showProviderForm && (
-            <div style={{ padding: 16, background: "#f8fafc", borderRadius: 6, marginBottom: 12, border: "1px solid #e2e8f0" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <div className="card" style={{ background: "rgba(255, 255, 255, 0.01)", border: "1px solid var(--border-color)", padding: 16, marginBottom: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
                 <div>
-                  <label htmlFor="af-provider-name" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Name</label>
+                  <label htmlFor="af-provider-name" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Name</label>
                   <input
                     id="af-provider-name"
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                     placeholder="e.g., Ollama Local"
-                    style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14 }}
+                    className="input-field"
                   />
                 </div>
                 <div>
-                  <label htmlFor="af-provider-type" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Type</label>
+                  <label htmlFor="af-provider-type" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Type</label>
                   <select
                     id="af-provider-type"
                     value={form.adapterType}
@@ -196,86 +196,90 @@ export function Settings() {
                       ...form,
                       adapterType: e.target.value as AiProvider["adapterType"],
                     })}
-                    style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14 }}
+                    className="select-field"
+                    style={{ width: "100%" }}
                   >
                     <option value="ollama">Ollama</option>
                     <option value="openai_compatible">OpenAI Compatible</option>
                   </select>
                 </div>
               </div>
-              <div style={{ marginBottom: 8 }}>
-                <label htmlFor="af-provider-url" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Base URL</label>
+              <div style={{ marginBottom: 12 }}>
+                <label htmlFor="af-provider-url" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Base URL</label>
                 <input
                   id="af-provider-url"
                   value={form.baseUrl}
                   onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
                   placeholder="http://localhost:11434"
-                  style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14 }}
+                  className="input-field"
                 />
               </div>
-              <div style={{ marginBottom: 8 }}>
-                <label htmlFor="af-provider-model" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Model</label>
+              <div style={{ marginBottom: 12 }}>
+                <label htmlFor="af-provider-model" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Model</label>
                 <input
                   id="af-provider-model"
                   value={form.defaultModel}
                   onChange={(e) => setForm({ ...form, defaultModel: e.target.value })}
                   placeholder="e.g., llama3, gpt-4"
-                  style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14 }}
+                  className="input-field"
                 />
               </div>
-              <div style={{ marginBottom: 8 }}>
-                <label htmlFor="af-provider-keyref" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>API Key Env Var (optional)</label>
+              <div style={{ marginBottom: 16 }}>
+                <label htmlFor="af-provider-keyref" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>API Key Env Var (optional)</label>
                 <input
                   id="af-provider-keyref"
                   value={form.apiKeyRef ?? ""}
                   onChange={(e) => setForm({ ...form, apiKeyRef: e.target.value || null })}
                   placeholder="OPENAI_API_KEY"
-                  style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14 }}
+                  className="input-field"
                 />
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <label htmlFor="af-provider-enabled" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                <label htmlFor="af-provider-enabled" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", color: "var(--text-primary)" }}>
                   <input
                     type="checkbox"
                     id="af-provider-enabled"
                     checked={form.enabled}
                     onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+                    style={{ width: 16, height: 16, accentColor: "var(--color-primary)", cursor: "pointer" }}
                   />
                   Enabled
                 </label>
               </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <button onClick={handleAddProvider} style={{ padding: "8px 16px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-                  Save Provider
-                </button>
-                <button onClick={() => { setShowProviderForm(false); setForm(EMPTY_PROVIDER); }} style={{ padding: "8px 16px", background: "#f1f5f9", color: "#475569", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button onClick={() => { setShowProviderForm(false); setForm(EMPTY_PROVIDER); }} className="btn btn-secondary">
                   Cancel
+                </button>
+                <button onClick={handleAddProvider} className="btn btn-success">
+                  Save Provider
                 </button>
               </div>
             </div>
           )}
 
           {providers.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 24, color: "#94a3b8" }}>
-              <Cpu size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
-              <p style={{ fontSize: 13 }}>No AI providers configured. Click "Auto-detect" to find local providers.</p>
+            <div style={{ textAlign: "center", padding: 32, color: "var(--text-secondary)" }}>
+              <Cpu size={36} style={{ marginBottom: 10, opacity: 0.5, color: "var(--color-primary)" }} />
+              <p style={{ fontSize: 13, margin: 0 }}>No AI providers configured. Click "Auto-detect" to find local providers.</p>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {providers.map((p) => (
-                <div key={p.id} style={{ padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                      {p.name}
-                      {p.enabled ? <Wifi size={12} color="#10b981" /> : <WifiOff size={12} color="#94a3b8" />}
+                <div key={p.id} style={{ padding: 14, background: "rgba(255, 255, 255, 0.01)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ minWidth: 0, flex: 1, paddingRight: 10 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ color: "var(--text-primary)" }}>{p.name}</span>
+                      <span className={p.enabled ? "badge badge-success" : "badge badge-neutral"}>
+                        {p.enabled ? "Active" : "Inactive"}
+                      </span>
                     </div>
-                    <div style={{ fontSize: 12, color: "#64748b" }}>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", fontFamily: "var(--font-mono)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
                       {p.adapterType} · {p.defaultModel} · {p.baseUrl}
                     </div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
                     {providerProbes[p.id] && (
-                      <span style={{ fontSize: 10, color: providerProbes[p.id].reachable ? "#166534" : "#991b1b" }}>
+                      <span style={{ fontSize: 11, color: providerProbes[p.id].reachable ? "var(--color-success-text)" : "var(--color-danger-text)", fontWeight: 600, fontFamily: "var(--font-mono)" }}>
                         {providerProbes[p.id].reachable
                           ? `${providerProbes[p.id].latencyMs}ms · ${providerProbes[p.id].models.length} models`
                           : "unreachable"}
@@ -285,14 +289,16 @@ export function Settings() {
                       onClick={() => handleProbeProvider(p.id)}
                       disabled={probingProviderId === p.id}
                       title="Test provider connection"
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#0f766e" }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "var(--color-primary-text)", outline: "none" }}
                     >
-                      <Activity size={16} />
+                      <Activity size={16} className={probingProviderId === p.id ? "spin-slow" : ""} />
                     </button>
                     <button
                       onClick={() => handleDeleteProvider(p.id)}
                       title="Delete provider"
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444" }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "var(--color-danger-text)", opacity: 0.7, transition: "opacity var(--transition-fast)", outline: "none" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.7")}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -304,85 +310,87 @@ export function Settings() {
         </div>
 
         {/* GitHub Integration */}
-        <div style={{ background: "#fff", borderRadius: 8, padding: 20, border: "1px solid #e2e8f0" }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-            <Github size={16} /> GitHub Integration
+        <div className="card" style={{ display: "flex", flexDirection: "column" }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+            <Github size={18} color="var(--color-accent)" /> GitHub Integration
           </h2>
 
           {ghAuth === null ? (
-            <p style={{ color: "#94a3b8", fontSize: 13 }}>Checking GitHub CLI status...</p>
+            <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>Checking GitHub CLI status...</p>
           ) : ghAuth.authenticated ? (
-            <div style={{ padding: 16, background: "#f0fdf4", borderRadius: 6, border: "1px solid #bbf7d0" }}>
+            <div style={{ padding: 16, background: "var(--color-success-bg)", borderRadius: "var(--radius-md)", border: "1px solid var(--color-success-border)", marginBottom: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <Wifi size={16} color="#166534" />
-                <span style={{ fontWeight: 600, color: "#166534" }}>Authenticated</span>
+                <Wifi size={16} color="var(--color-success-text)" />
+                <span style={{ fontWeight: 700, color: "var(--color-success-text)" }}>Authenticated</span>
               </div>
-              <div style={{ fontSize: 13, color: "#475569" }}>
+              <div style={{ fontSize: 13, color: "var(--text-primary)" }}>
                 Logged in as <strong>{ghAuth.username}</strong>
               </div>
-              <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.4 }}>
                 Repository metadata can be synced. GitHub write operations remain disabled.
               </div>
             </div>
           ) : (
-            <div style={{ padding: 16, background: "#fef3c7", borderRadius: 6, border: "1px solid #fde68a" }}>
+            <div style={{ padding: 16, background: "var(--color-warning-bg)", borderRadius: "var(--radius-md)", border: "1px solid var(--color-warning-border)", marginBottom: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <WifiOff size={16} color="#92400e" />
-                <span style={{ fontWeight: 600, color: "#92400e" }}>Not Authenticated</span>
+                <WifiOff size={16} color="var(--color-warning-text)" />
+                <span style={{ fontWeight: 700, color: "var(--color-warning-text)" }}>Not Authenticated</span>
               </div>
-              <div style={{ fontSize: 13, color: "#475569", marginBottom: 8 }}>
-                Install the GitHub CLI and run <code style={{ background: "#f1f5f9", padding: "2px 6px", borderRadius: 3, fontSize: 12 }}>gh auth login</code> to enable GitHub integration.
+              <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 8, lineHeight: 1.4 }}>
+                Install the GitHub CLI and run <code style={{ background: "rgba(255,255,255,0.03)", padding: "2px 6px", borderRadius: 3, fontSize: 12, fontFamily: "var(--font-mono)" }}>gh auth login</code> to enable GitHub integration.
               </div>
               {ghAuth.message && !ghAuth.authenticated && (
-                <div style={{ fontSize: 12, color: "#92400e" }}>{ghAuth.message}</div>
+                <div style={{ fontSize: 12, color: "var(--color-warning-text)", fontFamily: "var(--font-mono)" }}>{ghAuth.message}</div>
               )}
             </div>
           )}
 
           {/* Permission Summary */}
-          <div style={{ marginTop: 16 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Permission Policy</h3>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
-                  <th style={{ textAlign: "left", padding: "6px 0", color: "#64748b" }}>Capability</th>
-                  <th style={{ textAlign: "left", padding: "6px 0", color: "#64748b" }}>Risk Level</th>
-                  <th style={{ textAlign: "left", padding: "6px 0", color: "#64748b" }}>Approval</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "6px 0" }}>fs.read</td>
-                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#dcfce7", color: "#166534", fontSize: 11 }}>low</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Auto-approved</td>
-                </tr>
-                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "6px 0" }}>github.read</td>
-                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#dcfce7", color: "#166534", fontSize: 11 }}>none</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Auto-approved</td>
-                </tr>
-                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "6px 0" }}>github.create_pr</td>
-                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef3c7", color: "#92400e", fontSize: 11 }}>high</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Disabled</td>
-                </tr>
-                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "6px 0" }}>github.create_release</td>
-                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef2f2", color: "#991b1b", fontSize: 11 }}>critical</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Disabled</td>
-                </tr>
-                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "6px 0" }}>shell.verify</td>
-                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef3c7", color: "#92400e", fontSize: 11 }}>medium</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Single-use approval</td>
-                </tr>
-                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "6px 0" }}>fs.write_patch</td>
-                  <td style={{ padding: "6px 0" }}><span style={{ padding: "1px 6px", borderRadius: 3, background: "#fef2f2", color: "#991b1b", fontSize: 11 }}>high</span></td>
-                  <td style={{ padding: "6px 0", color: "#64748b" }}>Isolated approval</td>
-                </tr>
-              </tbody>
-            </table>
+          <div>
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: "var(--text-primary)" }}>Permission Policy</h3>
+            <div style={{ overflowX: "auto" }}>
+              <table className="custom-table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th>Capability</th>
+                    <th>Risk Level</th>
+                    <th>Approval</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="table-row-interactive">
+                    <td style={{ padding: "10px 16px" }}>fs.read</td>
+                    <td style={{ padding: "10px 16px" }}><span className="badge badge-success" style={{ fontSize: 10 }}>low</span></td>
+                    <td style={{ padding: "10px 16px", color: "var(--text-secondary)" }}>Auto-approved</td>
+                  </tr>
+                  <tr className="table-row-interactive">
+                    <td style={{ padding: "10px 16px" }}>github.read</td>
+                    <td style={{ padding: "10px 16px" }}><span className="badge badge-success" style={{ fontSize: 10 }}>none</span></td>
+                    <td style={{ padding: "10px 16px", color: "var(--text-secondary)" }}>Auto-approved</td>
+                  </tr>
+                  <tr className="table-row-interactive">
+                    <td style={{ padding: "10px 16px" }}>github.create_pr</td>
+                    <td style={{ padding: "10px 16px" }}><span className="badge badge-danger" style={{ fontSize: 10 }}>high</span></td>
+                    <td style={{ padding: "10px 16px", color: "var(--text-secondary)" }}>Disabled</td>
+                  </tr>
+                  <tr className="table-row-interactive">
+                    <td style={{ padding: "10px 16px" }}>github.create_release</td>
+                    <td style={{ padding: "10px 16px" }}><span className="badge badge-danger" style={{ fontSize: 10 }}>critical</span></td>
+                    <td style={{ padding: "10px 16px", color: "var(--text-secondary)" }}>Disabled</td>
+                  </tr>
+                  <tr className="table-row-interactive">
+                    <td style={{ padding: "10px 16px" }}>shell.verify</td>
+                    <td style={{ padding: "10px 16px" }}><span className="badge badge-warning" style={{ fontSize: 10 }}>medium</span></td>
+                    <td style={{ padding: "10px 16px", color: "var(--text-secondary)" }}>Single-use approval</td>
+                  </tr>
+                  <tr className="table-row-interactive">
+                    <td style={{ padding: "10px 16px" }}>fs.write_patch</td>
+                    <td style={{ padding: "10px 16px" }}><span className="badge badge-danger" style={{ fontSize: 10 }}>high</span></td>
+                    <td style={{ padding: "10px 16px", color: "var(--text-secondary)" }}>Isolated approval</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>

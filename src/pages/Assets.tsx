@@ -155,9 +155,9 @@ export function Assets() {
   if (roots.length === 0 && !showForm) {
     return (
       <div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Assets</h1>
+        <h1 style={{ fontSize: 26, fontWeight: 800, marginBottom: 24, letterSpacing: "-0.025em" }}>Assets</h1>
         {error && (
-          <div style={{ padding: 12, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, marginBottom: 16, color: "#991b1b" }}>
+          <div className="badge badge-danger" style={{ display: "block", width: "100%", padding: 12, borderRadius: "var(--radius-sm)", marginBottom: 16, fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -166,34 +166,24 @@ export function Assets() {
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          padding: "60px 20px",
-          background: "#fff",
-          borderRadius: 8,
-          border: "1px dashed #cbd5e1",
+          padding: "80px 24px",
+          background: "var(--bg-card)",
+          borderRadius: "var(--radius-lg)",
+          border: "1px dashed var(--border-color)",
+          boxShadow: "var(--shadow-lg)",
         }}>
-          <FolderOpen size={48} color="#94a3b8" strokeWidth={1.5} />
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: "#334155", marginTop: 16, marginBottom: 8 }}>
+          <FolderOpen size={56} color="var(--color-primary)" strokeWidth={1.5} style={{ filter: "drop-shadow(0 0 10px rgba(99, 102, 241, 0.4))" }} />
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", marginTop: 20, marginBottom: 8 }}>
             No workspace roots yet
           </h2>
-          <p style={{ color: "#64748b", fontSize: 14, textAlign: "center", maxWidth: 420, marginBottom: 20 }}>
+          <p style={{ color: "var(--text-secondary)", fontSize: 14, textAlign: "center", maxWidth: 460, marginBottom: 24, lineHeight: 1.6 }}>
             Add a directory to scan for repositories. AtlasForge will discover Git projects
             and build health profiles. Your files stay local — nothing is uploaded.
           </p>
           <button
             onClick={() => setShowForm(true)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 24px",
-              background: "#3b82f6",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
-              fontSize: 15,
-              fontWeight: 600,
-            }}
+            className="btn btn-primary"
+            style={{ padding: "10px 24px", fontSize: 14 }}
           >
             <Plus size={18} />
             Add Your First Root
@@ -205,44 +195,26 @@ export function Assets() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700 }}>Assets</h1>
-        <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.025em" }}>Assets</h1>
+        <div style={{ display: "flex", gap: 10 }}>
           <button
             onClick={handleScanAll}
             disabled={scanning || roots.length === 0}
+            className="btn btn-success"
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 16px",
-              background: scanning || roots.length === 0 ? "#94a3b8" : "#10b981",
+              background: scanning || roots.length === 0 ? "rgba(255,255,255,0.05)" : "var(--color-success)",
               color: "#fff",
               border: "none",
-              borderRadius: 6,
-              cursor: scanning || roots.length === 0 ? "not-allowed" : "pointer",
-              fontSize: 14,
-              fontWeight: 600,
+              boxShadow: scanning || roots.length === 0 ? "none" : "0 2px 10px rgba(16, 185, 129, 0.3)",
             }}
           >
-            <Scan size={16} />
+            <Scan size={16} className={scanning ? "spin-slow" : ""} />
             {scanning ? "Scanning..." : "Scan All Roots"}
           </button>
           <button
             onClick={() => setShowForm(!showForm)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 16px",
-              background: "#3b82f6",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 600,
-            }}
+            className="btn btn-primary"
           >
             <Plus size={16} />
             Add Root
@@ -251,39 +223,29 @@ export function Assets() {
       </div>
 
       {error && (
-        <div style={{ padding: 12, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, marginBottom: 16, color: "#991b1b" }}>
+        <div className="badge badge-danger" style={{ display: "block", width: "100%", padding: 12, borderRadius: "var(--radius-sm)", marginBottom: 20, fontSize: 13 }}>
           {error}
         </div>
       )}
 
       {showForm && (
-        <div style={{ background: "#fff", borderRadius: 8, padding: 20, border: "1px solid #e2e8f0", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Add Workspace Root</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+        <div className="card" style={{ marginBottom: 24, background: "rgba(16, 20, 38, 0.8)" }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, color: "var(--text-primary)" }}>Add Workspace Root</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             <div>
-              <label htmlFor="af-root-path" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Path</label>
-              <div style={{ display: "flex", gap: 6 }}>
+              <label htmlFor="af-root-path" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Path</label>
+              <div style={{ display: "flex", gap: 8 }}>
                 <input
                   id="af-root-path"
                   value={form.path}
                   onChange={(e) => setForm({ ...form, path: e.target.value })}
                   placeholder="C:\Users\you\projects"
-                  style={{ flex: 1, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 13 }}
+                  className="input-field"
                 />
                 <button
                   onClick={handlePickFolder}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                    padding: "8px 12px",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 4,
-                    background: "#f8fafc",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    whiteSpace: "nowrap",
-                  }}
+                  className="btn btn-secondary"
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px" }}
                   title="Browse for folder"
                 >
                   <FolderOpen size={14} />
@@ -292,59 +254,64 @@ export function Assets() {
               </div>
             </div>
             <div>
-              <label htmlFor="af-root-label" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Label</label>
+              <label htmlFor="af-root-label" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Label</label>
               <input
                 id="af-root-label"
                 value={form.label}
                 onChange={(e) => setForm({ ...form, label: e.target.value })}
                 placeholder="My Projects"
-                style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 13 }}
+                className="input-field"
               />
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             <div>
-              <label htmlFor="af-root-access" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Access Mode</label>
+              <label htmlFor="af-root-access" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Access Mode</label>
               <select
                 id="af-root-access"
                 value={form.accessMode}
                 onChange={(e) => setForm({ ...form, accessMode: e.target.value as any })}
-                style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 13 }}
+                className="select-field"
+                style={{ width: "100%" }}
               >
                 <option value="read_write">Read & Write</option>
                 <option value="read_only">Read Only</option>
               </select>
             </div>
-            <div>
-              <label htmlFor="af-root-scan" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Scan Enabled</label>
-              <input
-                id="af-root-scan"
-                type="checkbox"
-                checked={form.scanEnabled}
-                onChange={(e) => setForm({ ...form, scanEnabled: e.target.checked })}
-                style={{ marginTop: 8 }}
-              />
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <span style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 10, fontWeight: 600 }}>Scan Enabled</span>
+              <label htmlFor="af-root-scan" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", color: "var(--text-primary)" }}>
+                <input
+                  id="af-root-scan"
+                  type="checkbox"
+                  checked={form.scanEnabled}
+                  onChange={(e) => setForm({ ...form, scanEnabled: e.target.checked })}
+                  style={{ width: 16, height: 16, accentColor: "var(--color-primary)", cursor: "pointer" }}
+                />
+                Enable automatic background scanning
+              </label>
             </div>
           </div>
-          <div style={{ marginBottom: 12 }}>
-            <label htmlFor="af-root-exclude" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+          <div style={{ marginBottom: 20 }}>
+            <label htmlFor="af-root-exclude" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>
               Exclude Globs (comma-separated)
             </label>
             <input
               id="af-root-exclude"
               value={form.excludeGlobs.join(", ")}
               onChange={(e) => setForm({ ...form, excludeGlobs: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
-              style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 13, fontFamily: "monospace" }}
+              className="input-field"
+              style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}
             />
           </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button onClick={() => setShowForm(false)} style={{ padding: "8px 16px", border: "1px solid #e2e8f0", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 13 }}>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button onClick={() => setShowForm(false)} className="btn btn-secondary">
               Cancel
             </button>
             <button
               onClick={handleAdd}
               disabled={!form.path.trim()}
-              style={{ padding: "8px 16px", border: "none", borderRadius: 6, background: form.path.trim() ? "#3b82f6" : "#94a3b8", color: "#fff", cursor: form.path.trim() ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 600 }}
+              className="btn btn-primary"
             >
               Add Root
             </button>
@@ -353,77 +320,81 @@ export function Assets() {
       )}
 
       {roots.length === 0 ? (
-        <p style={{ color: "#94a3b8", fontSize: 14 }}>No workspace roots configured.</p>
+        <p style={{ color: "var(--text-secondary)", fontSize: 14 }}>No workspace roots configured.</p>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {roots.map((root) => (
             <div
               key={root.id}
-              style={{ background: "#fff", borderRadius: 8, padding: 16, border: "1px solid #e2e8f0" }}
+              className="card card-interactive"
+              style={{ display: "flex", flexDirection: "column", gap: 12, padding: 20 }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <FolderTree size={16} color="#3b82f6" />
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>{root.label}</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+                    <FolderTree size={18} color="var(--color-primary)" style={{ filter: "drop-shadow(0 0 5px rgba(99, 102, 241, 0.3))" }} />
+                    <span style={{ fontWeight: 700, fontSize: 15, color: "var(--text-primary)" }}>{root.label}</span>
                     <span
-                      style={{
-                        padding: "2px 8px",
-                        borderRadius: 4,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        background: root.accessMode === "read_only" ? "#fef3c7" : "#dcfce7",
-                        color: root.accessMode === "read_only" ? "#92400e" : "#166534",
-                      }}
+                      className={root.accessMode === "read_only" ? "badge badge-warning" : "badge badge-success"}
                     >
                       {root.accessMode === "read_only" ? "Read Only" : "Read & Write"}
                     </span>
                   </div>
-                  <div style={{ fontSize: 12, color: "#64748b", fontFamily: "monospace", marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", fontFamily: "var(--font-mono)", marginBottom: 8, wordBreak: "break-all" }}>
                     {root.path}
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 12 }}>
-                    <span style={{ color: root.scanEnabled ? "#10b981" : "#475569" }}>
-                      {root.scanEnabled ? "Scanning" : "Paused"}
+                  <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 12 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, color: root.scanEnabled ? "var(--color-success-text)" : "var(--text-secondary)", fontWeight: 500 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: root.scanEnabled ? "var(--color-success)" : "var(--text-muted)", boxShadow: root.scanEnabled ? "0 0 6px var(--color-success)" : "none" }} />
+                      {root.scanEnabled ? "Scanning Active" : "Scanning Paused"}
                     </span>
                     {root.lastScannedAt && (
-                      <span style={{ fontSize: 11, color: "#94a3b8" }}>
+                      <span style={{ color: "var(--text-muted)" }}>
                         Last scanned: {new Date(root.lastScannedAt).toLocaleString()}
                       </span>
                     )}
                   </div>
                   {root.excludeGlobs.length > 0 && (
-                    <div style={{ marginTop: 6, fontSize: 11, color: "#94a3b8" }}>
-                      Exclude: {root.excludeGlobs.join(", ")}
+                    <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)", wordBreak: "break-all" }}>
+                      <span style={{ fontWeight: 600 }}>Exclude:</span> {root.excludeGlobs.join(", ")}
                     </div>
                   )}
                   {(scanErrors[root.id]?.length ?? 0) > 0 && (
-                    <div style={{ marginTop: 8 }}>
+                    <div style={{ marginTop: 12 }}>
                       <button
-                        onClick={() => setExpandedErrors(expandedErrors === root.id ? null : root.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedErrors(expandedErrors === root.id ? null : root.id);
+                        }}
                         style={{
                           display: "flex",
                           alignItems: "center",
-                          gap: 4,
+                          gap: 6,
                           background: "none",
                           border: "none",
                           cursor: "pointer",
                           fontSize: 12,
-                          color: "#b45309",
+                          color: "var(--color-danger-text)",
+                          fontWeight: 600,
                           padding: 0,
+                          outline: "none",
                         }}
                       >
-                        <AlertTriangle size={12} />
+                        <AlertTriangle size={14} />
                         {scanErrors[root.id].length} scan error(s)
                         {expandedErrors === root.id ? " ▲" : " ▼"}
                       </button>
                       {expandedErrors === root.id && (
-                        <div style={{ marginTop: 6, maxHeight: 160, overflowY: "auto", fontSize: 11, background: "#fef3c7", borderRadius: 4, padding: 8 }}>
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ marginTop: 8, maxHeight: 200, overflowY: "auto", fontSize: 12, background: "var(--color-danger-bg)", border: "1px solid var(--color-danger-border)", borderRadius: "var(--radius-sm)", padding: 12 }}
+                          className="scrollbar-custom"
+                        >
                           {scanErrors[root.id].map((err) => (
-                            <div key={err.id} style={{ marginBottom: 4, borderBottom: "1px solid #fde68a", paddingBottom: 4 }}>
-                              <div style={{ fontWeight: 600, color: "#92400e" }}>{err.errorType}</div>
-                              {err.path && <div style={{ fontFamily: "monospace", color: "#78350f" }}>{err.path}</div>}
-                              <div style={{ color: "#92400e" }}>{err.message}</div>
+                            <div key={err.id} style={{ marginBottom: 8, borderBottom: "1px solid rgba(239, 68, 68, 0.15)", paddingBottom: 8 }}>
+                              <div style={{ fontWeight: 700, color: "var(--color-danger-text)", marginBottom: 2 }}>{err.errorType}</div>
+                              {err.path && <div style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)", fontSize: 11, marginBottom: 2 }}>{err.path}</div>}
+                              <div style={{ color: "var(--text-primary)" }}>{err.message}</div>
                             </div>
                           ))}
                         </div>
@@ -431,33 +402,30 @@ export function Assets() {
                     </div>
                   )}
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
                   <button
-                    onClick={() => handleScanRoot(root.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleScanRoot(root.id);
+                    }}
                     disabled={scanningRootId === root.id || !root.scanEnabled}
                     title="Scan this root"
-                    style={{
-                      padding: "6px 10px",
-                      border: "1px solid #d1d5db",
-                      borderRadius: 4,
-                      background: "#fff",
-                      color: "#374151",
-                      cursor: scanningRootId === root.id || !root.scanEnabled ? "not-allowed" : "pointer",
-                      fontSize: 12,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                    }}
+                    className="btn btn-secondary"
+                    style={{ padding: "6px 12px" }}
                   >
-                    <Play size={12} />
+                    <Play size={12} className={scanningRootId === root.id ? "spin-slow" : ""} />
                     {scanningRootId === root.id ? "Scanning" : "Scan"}
                   </button>
                   <button
-                    onClick={() => handleRemove(root.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemove(root.id);
+                    }}
                     title="Remove root"
-                    style={{ padding: "6px 10px", border: "1px solid #fca5a5", borderRadius: 4, background: "#fff", color: "#991b1b", cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}
+                    className="btn btn-danger"
+                    style={{ padding: "6px 10px" }}
                   >
-                    <Trash2 size={12} />
+                    <Trash2 size={14} />
                   </button>
                 </div>
               </div>

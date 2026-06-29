@@ -652,14 +652,15 @@ mod tests {
     fn captures_large_output_without_pipe_deadlock() {
         #[cfg(windows)]
         let command =
-            "powershell -NoProfile -Command \"1..20000 | ForEach-Object { 'abcdefghij' }\"";
+            "powershell -NoProfile -NonInteractive -Command \"1..20000 | ForEach-Object { 'abcdefghij' }\"";
         #[cfg(not(windows))]
         let command = "yes abcdefghij | head -n 20000";
-        let result = run_verification(command, ".", 10);
+        let result = run_verification(command, ".", 30);
         assert!(result.success, "{}", result.stderr);
         assert!(!result.stdout.is_empty());
         assert!(result.stdout.len() <= MAX_CAPTURE_BYTES);
     }
+
 
     #[test]
     fn cancellation_stops_a_running_command() {

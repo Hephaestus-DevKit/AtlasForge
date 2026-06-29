@@ -20,10 +20,22 @@ const iconMap = {
   info: Info,
 };
 
-const colorMap = {
-  success: { bg: "#f0fdf4", border: "#bbf7d0", fg: "#166534", icon: "#10b981" },
-  error: { bg: "#fef2f2", border: "#fca5a5", fg: "#991b1b", icon: "#ef4444" },
-  info: { bg: "#eff6ff", border: "#bfdbfe", fg: "#1e40af", icon: "#3b82f6" },
+const typeStyles = {
+  success: {
+    border: "1px solid var(--color-success-border)",
+    iconColor: "var(--color-success-text)",
+    glow: "0 4px 20px rgba(16, 185, 129, 0.15)",
+  },
+  error: {
+    border: "1px solid var(--color-danger-border)",
+    iconColor: "var(--color-danger-text)",
+    glow: "0 4px 20px rgba(239, 68, 68, 0.15)",
+  },
+  info: {
+    border: "1px solid var(--color-info-border)",
+    iconColor: "var(--color-info-text)",
+    glow: "0 4px 20px rgba(59, 130, 246, 0.15)",
+  },
 };
 
 /**
@@ -35,13 +47,14 @@ export function ToastContainer({ toasts, onDismiss, duration = 4000 }: ToastCont
     <div
       style={{
         position: "fixed",
-        top: 16,
-        right: 16,
-        zIndex: 999,
+        top: 24,
+        right: 24,
+        zIndex: 9999,
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 12,
         maxWidth: 380,
+        width: "calc(100vw - 48px)",
       }}
     >
       {toasts.map((t) => (
@@ -53,7 +66,7 @@ export function ToastContainer({ toasts, onDismiss, duration = 4000 }: ToastCont
 
 function ToastItem({ toast, onDismiss, duration }: { toast: ToastMessage; onDismiss: (id: number) => void; duration: number }) {
   const Icon = iconMap[toast.type];
-  const c = colorMap[toast.type];
+  const style = typeStyles[toast.type];
   const onDismissRef = useRef(onDismiss);
 
   useEffect(() => {
@@ -67,22 +80,40 @@ function ToastItem({ toast, onDismiss, duration }: { toast: ToastMessage; onDism
 
   return (
     <div
+      className="slide-in-right"
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        padding: "10px 14px",
-        background: c.bg,
-        border: `1px solid ${c.border}`,
-        borderRadius: 6,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+        gap: 12,
+        padding: "12px 16px",
+        background: "rgba(16, 20, 38, 0.85)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        border: style.border,
+        borderRadius: "var(--radius-md)",
+        boxShadow: `var(--shadow-lg), ${style.glow}`,
       }}
     >
-      <Icon size={16} color={c.icon} />
-      <span style={{ flex: 1, fontSize: 13, color: c.fg }}>{toast.message}</span>
+      <Icon size={18} color={style.iconColor} style={{ flexShrink: 0 }} />
+      <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", fontWeight: 500, lineHeight: 1.4 }}>
+        {toast.message}
+      </span>
       <button
         onClick={() => onDismiss(toast.id)}
-        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: c.fg, opacity: 0.6 }}
+        style={{
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          padding: 4,
+          color: "var(--text-secondary)",
+          opacity: 0.6,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "opacity var(--transition-fast)",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+        onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.6")}
       >
         <X size={14} />
       </button>

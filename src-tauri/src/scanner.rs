@@ -1,7 +1,7 @@
 use crate::db::Db;
 use crate::models::*;
-use crate::security::is_excluded;
 use serde::{Deserialize, Serialize};
+
 use std::path::Path;
 use std::process::Command;
 use walkdir::WalkDir;
@@ -51,13 +51,24 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
     let mut errors = Vec::new();
     let mut visited = std::collections::HashSet::new();
 
+    let compiled_excludes: Vec<glob::Pattern> = root
+        .exclude_globs
+        .iter()
+        .filter_map(|pattern| glob::Pattern::new(pattern).ok())
+        .collect();
+
     for entry in WalkDir::new(root_path)
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
             let path = e.path();
             // Skip excluded paths
-            if is_excluded(path, root) {
+            if crate::security::is_excluded_fast(
+                path,
+                &root.path,
+                &root.exclude_globs,
+                &compiled_excludes,
+            ) {
                 return false;
             }
             // Do not walk into Git internals; repo roots are detected by checking for a .git child.
@@ -66,6 +77,7 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
             }
             true
         })
+
     {
         let entry = match entry {
             Ok(e) => e,
@@ -126,6 +138,17 @@ fn discover_git_repo(
     // Create or find the project asset
     let asset_id = ensure_project_asset(&worktree_path, root, &name, db)?;
 
+    // Check for existing repo by worktree_path to preserve stable IDs in the struct
+    let existing_id = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM repository WHERE worktree_path = ?1")
+            .map_err(|e| e.to_string())?;
+        stmt.query_row(rusqlite::params![worktree_path], |row| row.get(0))
+            .ok()
+    };
+    let repo_id = existing_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
     // Read git info
     let current_branch = git_command(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]).ok();
     let head_sha = git_command(repo_path, &["rev-parse", "HEAD"]).ok();
@@ -140,7 +163,7 @@ fn discover_git_repo(
     let is_worktree = Path::new(&git_dir_path).is_file(); // .git file means worktree
 
     let repo = Repository {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: repo_id,
         asset_id,
         worktree_path: worktree_path.clone(),
         git_dir_path,

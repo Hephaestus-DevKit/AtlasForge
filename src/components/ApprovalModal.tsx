@@ -32,35 +32,38 @@ export function ApprovalModal({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 1100,
+        zIndex: 10000,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         padding: 24,
-        background: "rgba(15, 23, 42, 0.48)",
+        background: "rgba(3, 7, 18, 0.6)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
       }}
       onClick={busy ? undefined : onDeny}
     >
       <div
+        className="card fade-in"
         style={{
           width: "min(680px, 94vw)",
           maxHeight: "84vh",
           overflow: "auto",
-          borderRadius: 8,
-          border: "1px solid #cbd5e1",
-          background: "#fff",
-          boxShadow: "0 18px 50px rgba(15, 23, 42, 0.22)",
+          padding: 0,
+          boxShadow: "var(--shadow-lg), 0 0 50px rgba(0, 0, 0, 0.5)",
+          display: "flex",
+          flexDirection: "column",
         }}
         onClick={(event) => event.stopPropagation()}
       >
-        <div style={{ padding: "18px 20px", borderBottom: "1px solid #e2e8f0" }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-            <ShieldCheck size={20} color={highestRisk === "high" ? "#b91c1c" : "#b45309"} />
+        <div style={{ padding: "18px 24px", borderBottom: "1px solid var(--border-color)" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <ShieldCheck size={24} color={highestRisk === "high" ? "var(--color-danger)" : "var(--color-warning)"} style={{ flexShrink: 0, marginTop: 2 }} />
             <div style={{ flex: 1 }}>
-              <h2 id="approval-title" style={{ margin: 0, fontSize: 16, color: "#0f172a" }}>
+              <h2 id="approval-title" style={{ margin: 0, fontSize: 16, color: "var(--text-primary)", fontWeight: 700 }}>
                 Review execution approval
               </h2>
-              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b" }}>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-secondary)" }}>
                 Approval is single-use and becomes invalid if the repository context changes.
               </p>
             </div>
@@ -70,14 +73,24 @@ export function ApprovalModal({
               title="Close"
               disabled={busy}
               onClick={onDeny}
-              style={{ border: 0, background: "transparent", color: "#64748b", cursor: "pointer" }}
+              style={{
+                border: 0,
+                background: "transparent",
+                color: "var(--text-secondary)",
+                cursor: "pointer",
+                padding: 4,
+                opacity: 0.6,
+                transition: "opacity var(--transition-fast)",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.6")}
             >
               <X size={18} />
             </button>
           </div>
         </div>
 
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="scrollbar-custom" style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16, overflowY: "auto", flex: 1 }}>
           {requests.map((request) => {
             const command = detailString(request.details.command) ?? request.command;
             const expanded = detailString(request.details.expandedCommand);
@@ -91,59 +104,54 @@ export function ApprovalModal({
               <section
                 key={request.id}
                 style={{
-                  padding: 12,
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 6,
-                  background: "#f8fafc",
+                  padding: 16,
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "var(--radius-md)",
+                  background: "rgba(255, 255, 255, 0.02)",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <AlertTriangle size={14} color={request.riskLevel === "high" ? "#b91c1c" : "#b45309"} />
-                  <strong style={{ fontSize: 12, color: "#334155" }}>{request.capability}</strong>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <AlertTriangle size={14} color={request.riskLevel === "high" ? "var(--color-danger-text)" : "var(--color-warning-text)"} />
+                  <strong style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 600 }}>{request.capability}</strong>
                   <span
-                    style={{
-                      padding: "1px 6px",
-                      borderRadius: 3,
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: request.riskLevel === "high" ? "#991b1b" : "#92400e",
-                      background: request.riskLevel === "high" ? "#fee2e2" : "#fef3c7",
-                    }}
+                    className={request.riskLevel === "high" ? "badge badge-danger" : "badge badge-warning"}
                   >
                     {request.riskLevel}
                   </span>
                 </div>
-                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>
-                  Scope: <code>{request.scope}</code>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
+                  Scope: <code style={{ background: "rgba(255,255,255,0.05)", padding: "2px 6px", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: 11 }}>{request.scope}</code>
                 </div>
                 {filePath && (
-                  <div style={{ fontSize: 12, color: "#334155", marginBottom: 6 }}>
-                    Target: <code>{filePath}</code>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
+                    Target: <code style={{ background: "rgba(255,255,255,0.05)", padding: "2px 6px", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: 11 }}>{filePath}</code>
                   </div>
                 )}
                 {command && (
-                  <pre style={{ margin: "0 0 6px", padding: 8, borderRadius: 4, background: "#0f172a", color: "#e2e8f0", fontSize: 11, whiteSpace: "pre-wrap" }}>
+                  <pre style={{ margin: "0 0 10px", padding: 12, borderRadius: "var(--radius-sm)", background: "var(--bg-input)", border: "1px solid var(--border-color)", color: "#93c5fd", fontSize: 12, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", overflowX: "auto" }}>
                     {command}
                   </pre>
                 )}
                 {expanded && expanded !== command && (
-                  <details style={{ marginBottom: 6 }}>
-                    <summary style={{ cursor: "pointer", fontSize: 11, color: "#475569" }}>
+                  <details style={{ marginBottom: 10 }}>
+                    <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--color-primary)", fontWeight: 500, outline: "none" }}>
                       Expanded lifecycle scripts
                     </summary>
-                    <pre style={{ margin: "6px 0 0", padding: 8, borderRadius: 4, background: "#fff", border: "1px solid #e2e8f0", color: "#334155", fontSize: 11, whiteSpace: "pre-wrap" }}>
+                    <pre style={{ margin: "8px 0 0", padding: 12, borderRadius: "var(--radius-sm)", background: "rgba(255, 255, 255, 0.01)", border: "1px solid var(--border-color)", color: "var(--text-secondary)", fontSize: 11, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap" }}>
                       {expanded}
                     </pre>
                   </details>
                 )}
-                {reason && <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>{reason}</p>}
+                {reason && <p style={{ margin: 0, fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.4 }}>{reason}</p>}
                 {clean === false && (
-                  <p style={{ margin: "6px 0 0", fontSize: 11, color: "#991b1b" }}>
+                  <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--color-danger-text)", fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--color-danger)" }} />
                     The working tree is not clean. This operation cannot proceed.
                   </p>
                 )}
                 {checks.length > 0 && (
-                  <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b" }}>
+                  <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--color-info-text)", display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--color-info)" }} />
                     The patch will be tested in an isolated worktree using {checks.length} detected verification command(s).
                   </p>
                 )}
@@ -152,12 +160,12 @@ export function ApprovalModal({
           })}
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "14px 20px", borderTop: "1px solid #e2e8f0" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, padding: "16px 24px", borderTop: "1px solid var(--border-color)" }}>
           <button
             type="button"
             disabled={busy}
             onClick={onDeny}
-            style={{ padding: "7px 12px", borderRadius: 5, border: "1px solid #cbd5e1", background: "#fff", color: "#475569", cursor: busy ? "wait" : "pointer" }}
+            className="btn btn-secondary"
           >
             Deny
           </button>
@@ -165,7 +173,13 @@ export function ApprovalModal({
             type="button"
             disabled={busy}
             onClick={onApprove}
-            style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 5, border: 0, background: "#0f766e", color: "#fff", cursor: busy ? "wait" : "pointer", fontWeight: 600 }}
+            className="btn btn-success"
+            style={{
+              background: "var(--color-success)",
+              color: "#fff",
+              border: "none",
+              boxShadow: "0 2px 8px rgba(16, 185, 129, 0.3)",
+            }}
           >
             <Check size={14} />
             {busy ? "Running..." : "Approve once"}

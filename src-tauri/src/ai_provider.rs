@@ -270,38 +270,71 @@ impl ContextPack {
         parts.join("\n\n")
     }
 }
+use std::sync::OnceLock;
+
+static SECRET_REGEXES: OnceLock<Vec<(regex::Regex, &'static str)>> = OnceLock::new();
+
+fn get_secret_regexes() -> &'static Vec<(regex::Regex, &'static str)> {
+    SECRET_REGEXES.get_or_init(|| {
+        let patterns = [
+            (
+                r#"(?i)(api[_-]?key|apikey|secret|token|password|passwd|auth)\s*[:=]\s*['"]?[A-Za-z0-9+/=_-]{16,}"#,
+                "API key/secret",
+            ),
+            (r"ghp_[A-Za-z0-9]{36}", "GitHub PAT"),
+            (r"gho_[A-Za-z0-9]{36}", "GitHub OAuth"),
+            (r"sk-[A-Za-z0-9]{48}", "OpenAI API key"),
+            (
+                r"-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----",
+                "Private key",
+            ),
+            (r"AKIA[0-9A-Z]{16}", "AWS Access Key ID"),
+            (
+                r"eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*",
+                "JWT token",
+            ),
+        ];
+
+        patterns
+            .iter()
+            .filter_map(|(pattern, label)| {
+                regex::Regex::new(pattern).ok().map(|re| (re, *label))
+            })
+            .collect()
+    })
+}
+
+static REDACT_REGEXES: OnceLock<Vec<regex::Regex>> = OnceLock::new();
+
+fn get_redact_regexes() -> &'static Vec<regex::Regex> {
+    REDACT_REGEXES.get_or_init(|| {
+        let patterns = [
+            r#"(?i)(api[_-]?key|apikey|secret|token|password|passwd|auth)\s*[:=]\s*['"]?[A-Za-z0-9+/=_-]{16,}"#,
+            r"ghp_[A-Za-z0-9]{36}",
+            r"gho_[A-Za-z0-9]{36}",
+            r"sk-[A-Za-z0-9]{48}",
+            r"AKIA[0-9A-Z]{16}",
+            r"eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*",
+            r"(?s)-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----.*?-----END (?:RSA |EC |DSA )?PRIVATE KEY-----",
+        ];
+
+        patterns
+            .iter()
+            .filter_map(|pattern| regex::Regex::new(pattern).ok())
+            .collect()
+    })
+}
 
 /// Scan content for potential secrets before sending to AI.
 pub fn scan_for_secrets(content: &str) -> Vec<SecretMatch> {
-    let patterns = [
-        (
-            r#"(?i)(api[_-]?key|apikey|secret|token|password|passwd|auth)\s*[:=]\s*['"]?[A-Za-z0-9+/=_-]{16,}"#,
-            "API key/secret",
-        ),
-        (r"ghp_[A-Za-z0-9]{36}", "GitHub PAT"),
-        (r"gho_[A-Za-z0-9]{36}", "GitHub OAuth"),
-        (r"sk-[A-Za-z0-9]{48}", "OpenAI API key"),
-        (
-            r"-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----",
-            "Private key",
-        ),
-        (r"AKIA[0-9A-Z]{16}", "AWS Access Key ID"),
-        (
-            r"eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*",
-            "JWT token",
-        ),
-    ];
-
     let mut matches = Vec::new();
-    for (pattern, label) in &patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            for mat in re.find_iter(content) {
-                matches.push(SecretMatch {
-                    label: label.to_string(),
-                    position: mat.start(),
-                    preview: "[REDACTED]".into(),
-                });
-            }
+    for (re, label) in get_secret_regexes() {
+        for mat in re.find_iter(content) {
+            matches.push(SecretMatch {
+                label: label.to_string(),
+                position: mat.start(),
+                preview: "[REDACTED]".into(),
+            });
         }
     }
 
@@ -319,20 +352,8 @@ pub struct SecretMatch {
 /// Redact secrets from content before sending to AI.
 pub fn redact_secrets(content: &str) -> String {
     let mut result = content.to_string();
-    let patterns = [
-        r#"(?i)(api[_-]?key|apikey|secret|token|password|passwd|auth)\s*[:=]\s*['"]?[A-Za-z0-9+/=_-]{16,}"#,
-        r"ghp_[A-Za-z0-9]{36}",
-        r"gho_[A-Za-z0-9]{36}",
-        r"sk-[A-Za-z0-9]{48}",
-        r"AKIA[0-9A-Z]{16}",
-        r"eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*",
-        r"(?s)-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----.*?-----END (?:RSA |EC |DSA )?PRIVATE KEY-----",
-    ];
-
-    for pattern in &patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            result = re.replace_all(&result, "[REDACTED]").to_string();
-        }
+    for re in get_redact_regexes() {
+        result = re.replace_all(&result, "[REDACTED]").to_string();
     }
 
     result

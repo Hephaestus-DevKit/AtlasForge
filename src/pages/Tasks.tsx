@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listJobs, getJobEvents, cancelJob, retryJob, listArtifacts, listAuditLog } from "../api/ipc";
 import type { Job, JobEvent, Artifact, AuditEntry } from "../types";
-import { ListTodo, ChevronDown, ChevronRight, XCircle, RotateCcw, Package, Clock, AlertTriangle, CheckCircle2, Loader2, Ban, ShieldCheck } from "lucide-react";
+import { ListTodo, ChevronDown, ChevronRight, RotateCcw, Package, Clock, AlertTriangle, CheckCircle2, Loader2, Ban, ShieldCheck } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
 
 /** Parse a JSON payload string safely. */
@@ -56,27 +56,25 @@ const eventTypeLabels: Record<string, string> = {
 /** Icon for event type. */
 function EventIcon({ type }: { type: string }) {
   if (type.endsWith("_failed") || type === "root_scan_error") {
-    return <AlertTriangle size={12} style={{ color: "#dc2626" }} />;
+    return <AlertTriangle size={12} color="var(--color-danger)" />;
   }
   if (type.endsWith("_completed") || type === "job_completed") {
-    return <CheckCircle2 size={12} style={{ color: "#16a34a" }} />;
+    return <CheckCircle2 size={12} color="var(--color-success)" />;
   }
   if (type === "job_cancelled" || type === "root_skipped") {
-    return <Ban size={12} style={{ color: "#94a3b8" }} />;
+    return <Ban size={12} color="var(--text-muted)" />;
   }
   if (type.includes("started")) {
-    return <Loader2 size={12} style={{ color: "#2563eb" }} />;
+    return <Loader2 size={12} color="var(--color-primary)" className="spin-slow" />;
   }
-  return <Clock size={12} style={{ color: "#94a3b8" }} />;
+  return <Clock size={12} color="var(--text-secondary)" />;
 }
 
 /** Render a concise summary from a parsed event payload. */
 function renderPayloadSummary(type: string, payload: Record<string, unknown>): string | null {
-  // Error events
   if ("error" in payload && typeof payload.error === "string") {
     return payload.error.length > 120 ? payload.error.slice(0, 120) + "…" : payload.error;
   }
-  // Scan summary
   if (type === "scan_summary") {
     const parts: string[] = [];
     if ("reposDiscovered" in payload) parts.push(`${payload.reposDiscovered} repos`);
@@ -84,25 +82,21 @@ function renderPayloadSummary(type: string, payload: Record<string, unknown>): s
     if ("rootsSkipped" in payload) parts.push(`${payload.rootsSkipped} skipped`);
     return parts.join(", ") || null;
   }
-  // Root skipped
   if (type === "root_skipped") {
     const label = typeof payload.label === "string" ? payload.label : "";
     const reason = typeof payload.reason === "string" ? payload.reason : "";
     return [label, reason].filter(Boolean).join(" — ") || null;
   }
-  // Audit completed
   if (type === "audit_completed") {
     const score = payload.score;
     const repoId = typeof payload.repoId === "string" ? payload.repoId : "";
     return `Score: ${score}${repoId ? ` (${repoId.slice(0, 8)}…)` : ""}`;
   }
-  // Reindex completed
   if (type === "reindex_completed") {
     const docs = payload.documents;
     const chunks = payload.chunks;
     return `${docs} documents, ${chunks} chunks`;
   }
-  // Verification
   if (type === "verification_completed" || type === "verification_failed") {
     const cmd = typeof payload.command === "string" ? payload.command : "";
     const dur = payload.durationMs;
@@ -113,7 +107,6 @@ function renderPayloadSummary(type: string, payload: Record<string, unknown>): s
     if (typeof exitCode === "number") parts.push(`exit ${exitCode}`);
     return parts.join(" · ") || null;
   }
-  // GitHub sync completed
   if (type === "github_sync_completed") {
     const parts: string[] = [];
     if (typeof payload.workflows === "number") parts.push(`${payload.workflows} workflows`);
@@ -121,19 +114,16 @@ function renderPayloadSummary(type: string, payload: Record<string, unknown>): s
     if (typeof payload.releases === "number") parts.push(`${payload.releases} releases`);
     return parts.join(", ") || null;
   }
-  // AI call completed
   if (type === "ai_call_completed") {
     const parts: string[] = [];
     if (typeof payload.tokensIn === "number") parts.push(`${payload.tokensIn} in`);
     if (typeof payload.tokensOut === "number") parts.push(`${payload.tokensOut} out`);
     return parts.length > 0 ? `${parts.join(", ")} tokens` : null;
   }
-  // Repo discovered / profiled
   if (type === "scan_repo_discovered") {
     const path = typeof payload.path === "string" ? payload.path : "";
     return path.length > 80 ? path.slice(0, 80) + "…" : path;
   }
-  // Generic: show repoId, rootId, rootCount if present
   const parts: string[] = [];
   if ("repoId" in payload && typeof payload.repoId === "string") {
     parts.push(`repo ${payload.repoId.slice(0, 8)}…`);
@@ -148,19 +138,11 @@ function renderPayloadSummary(type: string, payload: Record<string, unknown>): s
 }
 
 const statusIcons: Record<string, React.ReactNode> = {
-  pending: <Clock size={14} style={{ color: "#92400e" }} />,
-  running: <Loader2 size={14} style={{ color: "#1e40af" }} />,
-  completed: <CheckCircle2 size={14} style={{ color: "#166534" }} />,
-  failed: <AlertTriangle size={14} style={{ color: "#991b1b" }} />,
-  cancelled: <Ban size={14} style={{ color: "#475569" }} />,
-};
-
-const statusColors: Record<string, { bg: string; fg: string }> = {
-  pending: { bg: "#fef3c7", fg: "#92400e" },
-  running: { bg: "#dbeafe", fg: "#1e40af" },
-  completed: { bg: "#dcfce7", fg: "#166534" },
-  failed: { bg: "#fef2f2", fg: "#991b1b" },
-  cancelled: { bg: "#f1f5f9", fg: "#475569" },
+  pending: <Clock size={14} color="var(--color-warning-text)" />,
+  running: <Loader2 size={14} color="var(--color-info-text)" className="spin-slow" />,
+  completed: <CheckCircle2 size={14} color="var(--color-success-text)" />,
+  failed: <AlertTriangle size={14} color="var(--color-danger-text)" />,
+  cancelled: <Ban size={14} color="var(--text-secondary)" />,
 };
 
 export function Tasks() {
@@ -242,18 +224,18 @@ export function Tasks() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700 }}>Tasks</h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.025em" }}>Tasks</h1>
         <button
           onClick={loadJobs}
-          style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 13 }}
+          className="btn btn-secondary"
         >
           Refresh
         </button>
       </div>
 
       {error && (
-        <div style={{ padding: 12, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, marginBottom: 16, color: "#991b1b" }}>
+        <div className="badge badge-danger" style={{ display: "block", width: "100%", padding: 12, borderRadius: "var(--radius-sm)", marginBottom: 20, fontSize: 13 }}>
           {error}
         </div>
       )}
@@ -265,59 +247,68 @@ export function Tasks() {
           description="Start a scan from the Dashboard to create one."
         />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
           {jobs.map((job) => {
             const isExpanded = expandedJob === job.id;
-            const c = statusColors[job.status] ?? { bg: "#f1f5f9", fg: "#475569" };
+            const badgeClasses: Record<string, string> = {
+              pending: "badge badge-warning",
+              running: "badge badge-info pulse-glow",
+              completed: "badge badge-success",
+              failed: "badge badge-danger",
+              cancelled: "badge badge-neutral",
+            };
+            const cls = badgeClasses[job.status] ?? "badge badge-neutral";
             return (
-              <div key={job.id} style={{ background: "#fff", borderRadius: 8, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+              <div key={job.id} className="card" style={{ padding: 0, overflow: "hidden" }}>
                 {/* Job Header */}
                 <div
-                  style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
+                  style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}
                   onClick={() => toggleExpand(job.id)}
                 >
-                  {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {isExpanded ? <ChevronDown size={18} color="var(--text-secondary)" /> : <ChevronRight size={18} color="var(--text-secondary)" />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
                       {statusIcons[job.status] ?? null}
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>{job.type}</span>
-                      <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: c.bg, color: c.fg }}>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: "var(--text-primary)" }}>{job.type}</span>
+                      <span className={cls}>
                         {job.status}
                       </span>
                       {job.progressTotal > 0 && (
-                        <span style={{ fontSize: 11, color: "#64748b" }}>
-                          {job.progress}/{job.progressTotal}
+                        <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600 }}>
+                          {job.progress} / {job.progressTotal}
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
                       {new Date(job.createdAt).toLocaleString()}
                       {job.completedAt && <> · Completed: {new Date(job.completedAt).toLocaleString()}</>}
                       {job.parentJobId && (
-                        <span style={{ marginLeft: 8, color: "#94a3b8" }}>
+                        <span style={{ marginLeft: 8, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
                           (retry of {job.parentJobId.slice(0, 8)}…)
                         </span>
                       )}
                     </div>
                     {job.errorMessage && (
-                      <div style={{ fontSize: 12, color: "#991b1b", marginTop: 4, background: "#fef2f2", padding: "4px 8px", borderRadius: 4 }}>
+                      <div className="badge badge-danger" style={{ display: "block", marginTop: 8, padding: "8px 12px", borderRadius: "var(--radius-sm)", fontSize: 12, textAlign: "left" }}>
                         {job.errorMessage.length > 200 ? job.errorMessage.slice(0, 200) + "…" : job.errorMessage}
                       </div>
                     )}
                   </div>
-                  <div style={{ display: "flex", gap: 6 }}>
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                     {(job.status === "running" || job.status === "pending") && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleCancel(job.id); }}
-                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", background: "#fef2f2", color: "#991b1b", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer", fontSize: 12 }}
+                        onClick={() => handleCancel(job.id)}
+                        className="btn btn-danger"
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
-                        <XCircle size={12} /> Cancel
+                        Cancel
                       </button>
                     )}
                     {(job.status === "failed" || job.status === "cancelled") && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleRetry(job.id); }}
-                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", background: "#f0f9ff", color: "#0369a1", border: "1px solid #bae6fd", borderRadius: 4, cursor: "pointer", fontSize: 12 }}
+                        onClick={() => handleRetry(job.id)}
+                        className="btn btn-primary"
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         <RotateCcw size={12} /> Retry
                       </button>
@@ -327,51 +318,51 @@ export function Tasks() {
 
                 {/* Expanded Detail Panel */}
                 {isExpanded && (
-                  <div style={{ borderTop: "1px solid #e2e8f0", padding: "12px 16px", background: "#f8fafc" }}>
+                  <div style={{ borderTop: "1px solid var(--border-color)", padding: 20, background: "rgba(255, 255, 255, 0.01)" }}>
                     {/* Progress bar */}
                     {job.progressTotal > 0 && (
-                      <div style={{ marginBottom: 12 }}>
-                        <div style={{ height: 6, background: "#e2e8f0", borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{ marginBottom: 18 }}>
+                        <div style={{ height: 6, background: "rgba(255, 255, 255, 0.05)", borderRadius: 3, overflow: "hidden" }}>
                           <div
                             style={{
                               height: "100%",
                               width: `${Math.min(100, (job.progress / job.progressTotal) * 100)}%`,
-                              background: job.status === "failed" ? "#ef4444" : job.status === "completed" ? "#22c55e" : "#3b82f6",
+                              background: job.status === "failed" ? "var(--color-danger)" : job.status === "completed" ? "var(--color-success)" : "var(--color-primary)",
                               borderRadius: 3,
                               transition: "width 0.3s ease",
                             }}
                           />
                         </div>
-                        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
-                          {job.progress} / {job.progressTotal} steps
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, fontWeight: 500 }}>
+                          {job.progress} / {job.progressTotal} steps completed
                         </div>
                       </div>
                     )}
 
                     {/* Events Timeline */}
-                    <div style={{ marginBottom: 12 }}>
-                      <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Events</h4>
+                    <div style={{ marginBottom: 18 }}>
+                      <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "var(--text-primary)" }}>Events</h4>
                       {events.length === 0 ? (
-                        <p style={{ fontSize: 12, color: "#94a3b8" }}>No events recorded.</p>
+                        <p style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>No events recorded.</p>
                       ) : (
-                        <div style={{ borderLeft: "2px solid #e2e8f0", marginLeft: 6, paddingLeft: 12 }}>
+                        <div style={{ borderLeft: "2px solid var(--border-color)", marginLeft: 6, paddingLeft: 16 }}>
                           {events.map((evt) => {
                             const parsed = parsePayload(evt.payload);
                             const label = eventTypeLabels[evt.type] ?? evt.type;
                             const summary = parsed ? renderPayloadSummary(evt.type, parsed) : null;
                             return (
-                              <div key={evt.id} style={{ display: "flex", gap: 8, padding: "4px 0", fontSize: 12, position: "relative" }}>
-                                <div style={{ position: "absolute", left: -17, top: 4 }}>
+                              <div key={evt.id} style={{ display: "flex", gap: 8, padding: "6px 0", fontSize: 12, position: "relative", alignItems: "center" }}>
+                                <div style={{ position: "absolute", left: -22, top: "50%", transform: "translateY(-50%)", background: "var(--bg-card)", padding: 2 }}>
                                   <EventIcon type={evt.type} />
                                 </div>
-                                <span style={{ color: "#94a3b8", fontFamily: "monospace", minWidth: 20, fontSize: 10 }}>#{evt.seq}</span>
-                                <span style={{ fontWeight: 500, color: "#475569" }}>{label}</span>
+                                <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", minWidth: 24, fontSize: 10 }}>#{evt.seq}</span>
+                                <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{label}</span>
                                 {summary && (
-                                  <span style={{ color: "#64748b" }}>
+                                  <span style={{ color: "var(--text-secondary)" }}>
                                     {summary}
                                   </span>
                                 )}
-                                <span style={{ color: "#cbd5e1", marginLeft: "auto", fontSize: 11, whiteSpace: "nowrap" }}>
+                                <span style={{ color: "var(--text-muted)", marginLeft: "auto", fontSize: 11, fontFamily: "var(--font-mono)" }}>
                                   {formatTime(evt.createdAt)}
                                 </span>
                               </div>
@@ -384,21 +375,23 @@ export function Tasks() {
                     {/* Artifacts */}
                     {artifacts.length > 0 && (
                       <div>
-                        <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
-                          <Package size={12} /> Artifacts
+                        <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 6, color: "var(--text-primary)" }}>
+                          <Package size={14} color="var(--color-primary)" /> Artifacts
                         </h4>
-                        {artifacts.map((art) => (
-                          <div key={art.id} style={{ padding: 8, background: "#fff", borderRadius: 4, marginBottom: 4, border: "1px solid #e2e8f0", fontSize: 12 }}>
-                            <div style={{ fontWeight: 500, marginBottom: 2 }}>
-                              {art.artifactType} {art.filePath && `· ${art.filePath}`}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {artifacts.map((art) => (
+                            <div key={art.id} style={{ padding: 12, background: "rgba(255,255,255,0.01)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-color)", fontSize: 12 }}>
+                              <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--text-primary)" }}>
+                                {art.artifactType} {art.filePath && `· ${art.filePath}`}
+                              </div>
+                              {art.content && (
+                                <pre style={{ margin: 0, padding: 10, background: "var(--bg-input)", border: "1px solid var(--border-color)", color: "#93c5fd", borderRadius: 4, fontSize: 11, fontFamily: "var(--font-mono)", overflow: "auto", maxHeight: 100 }}>
+                                  {art.content.length > 200 ? art.content.slice(0, 200) + "…" : art.content}
+                                </pre>
+                              )}
                             </div>
-                            {art.content && (
-                              <pre style={{ margin: 0, padding: 6, background: "#1e293b", color: "#e2e8f0", borderRadius: 3, fontSize: 11, overflow: "auto", maxHeight: 80 }}>
-                                {art.content.length > 200 ? art.content.slice(0, 200) + "…" : art.content}
-                              </pre>
-                            )}
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -409,48 +402,52 @@ export function Tasks() {
         </div>
       )}
 
-      <section style={{ marginTop: 24 }}>
-        <h2 style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontSize: 15 }}>
-          <ShieldCheck size={16} color="#0f766e" />
-          Security activity
+      {/* Security Activity Section */}
+      <section style={{ marginTop: 32 }}>
+        <h2 style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 16, fontWeight: 700, color: "var(--text-primary)" }}>
+          <ShieldCheck size={18} color="var(--color-success)" />
+          Security Activity
         </h2>
         {auditEntries.length === 0 ? (
-          <p style={{ fontSize: 12, color: "#94a3b8" }}>No audit activity recorded.</p>
+          <p style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>No audit activity recorded.</p>
         ) : (
-          <div style={{ borderTop: "1px solid #e2e8f0", overflowX: "auto" }}>
-            {auditEntries.map((entry) => (
-              <div
-                key={entry.id}
-                style={{
-                  minWidth: 620,
-                  display: "grid",
-                  gridTemplateColumns: "minmax(150px, 1fr) minmax(120px, 180px) 80px 150px",
-                  gap: 10,
-                  alignItems: "center",
-                  padding: "8px 0",
-                  borderBottom: "1px solid #e2e8f0",
-                  fontSize: 11,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600, color: "#334155" }}>
-                    {entry.action}
-                  </div>
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#94a3b8" }}>
-                    {entry.subject}
-                  </div>
-                </div>
-                <code style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>
-                  {entry.capability}
-                </code>
-                <span style={{ color: entry.riskLevel === "high" || entry.riskLevel === "critical" ? "#991b1b" : "#64748b", fontWeight: 600 }}>
-                  {entry.riskLevel}
-                </span>
-                <span style={{ textAlign: "right", color: "#94a3b8" }}>
-                  {new Date(entry.createdAt).toLocaleString()}
-                </span>
-              </div>
-            ))}
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table className="custom-table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: "10px 16px" }}>Action</th>
+                    <th style={{ padding: "10px 16px" }}>Capability</th>
+                    <th style={{ padding: "10px 16px" }}>Risk</th>
+                    <th style={{ padding: "10px 16px" }}>Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditEntries.map((entry) => {
+                    const isHigh = entry.riskLevel === "high" || entry.riskLevel === "critical";
+                    return (
+                      <tr key={entry.id} className="table-row-interactive">
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>{entry.action}</div>
+                          <div style={{ color: "var(--text-secondary)", fontSize: 11, marginTop: 2, fontFamily: "var(--font-mono)" }}>{entry.subject}</div>
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <code style={{ fontFamily: "var(--font-mono)", background: "rgba(255,255,255,0.03)", padding: "2px 6px", borderRadius: 4 }}>{entry.capability}</code>
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span className={isHigh ? "badge badge-danger" : "badge badge-neutral"}>
+                            {entry.riskLevel}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", color: "var(--text-muted)", fontSize: 11 }}>
+                          {new Date(entry.createdAt).toLocaleString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </section>

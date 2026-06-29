@@ -84,31 +84,62 @@ pub fn authorize_write(path: &Path, roots: &[WorkspaceRoot]) -> Result<(), Strin
 }
 
 /// Check if a path should be excluded based on root exclude globs.
+#[allow(dead_code)]
 pub fn is_excluded(path: &Path, root: &WorkspaceRoot) -> bool {
+
+    let compiled: Vec<glob::Pattern> = root
+        .exclude_globs
+        .iter()
+        .filter_map(|pattern| glob::Pattern::new(pattern).ok())
+        .collect();
+    is_excluded_fast(path, &root.path, &root.exclude_globs, &compiled)
+}
+
+/// Optimized version of is_excluded using pre-compiled glob patterns.
+pub fn is_excluded_fast(
+    path: &Path,
+    root_path: &str,
+    exclude_globs: &[String],
+    compiled_patterns: &[glob::Pattern],
+) -> bool {
     let path_str = path.to_string_lossy();
-    let relative = if path_str.starts_with(&root.path) {
-        &path_str[root.path.len()..]
+
+    #[cfg(windows)]
+    let (p_norm, r_norm) = {
+        let p = path_str.replace('/', "\\").to_lowercase();
+        let r = root_path.replace('/', "\\").to_lowercase();
+        (p, r)
+    };
+
+    #[cfg(not(windows))]
+    let (p_norm, r_norm) = (path_str.to_string(), root_path.to_string());
+
+    let relative = if p_norm.starts_with(&r_norm) {
+        &path_str[r_norm.len()..]
     } else {
-        &*path_str
+        &path_str
     };
     let relative = relative.trim_start_matches('/').trim_start_matches('\\');
+    let relative_slashes = relative.replace('\\', "/");
 
-    for pattern in &root.exclude_globs {
-        if let Ok(glob_pattern) = glob::Pattern::new(pattern) {
-            if glob_pattern.matches(relative) || glob_pattern.matches_path(Path::new(relative)) {
-                return true;
-            }
+    for glob_pattern in compiled_patterns {
+        if glob_pattern.matches(&relative_slashes) {
+            return true;
         }
+    }
+
+    for pattern in exclude_globs {
         // Also match as a path prefix for directory patterns like "node_modules"
-        if relative.starts_with(pattern)
-            || relative.contains(&format!("/{}", pattern))
-            || relative.contains(&format!("\\{}", pattern))
+        if relative_slashes.starts_with(pattern)
+            || relative_slashes.contains(&format!("/{}", pattern))
         {
             return true;
         }
     }
     false
 }
+
+
 
 /// Default exclude patterns applied to all roots.
 pub const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
@@ -194,4 +225,30 @@ mod tests {
         assert!(authorize_path(&nested_path, &[root]).is_some());
         assert!(same_path(&root_path, &root_path));
     }
+
+    #[test]
+    fn test_is_excluded_casing_and_separators() {
+        let root = WorkspaceRoot {
+            id: "test".into(),
+            path: "C:\\Users\\User\\Projects".into(),
+            label: "Test".into(),
+            access_mode: "read_write".into(),
+            scan_enabled: true,
+            include_globs: vec![],
+            exclude_globs: vec!["node_modules".into(), "dist/output.json".into()],
+            created_at: "".into(),
+            last_scanned_at: None,
+        };
+
+        // Standard matching casing
+        assert!(is_excluded(Path::new("C:\\Users\\User\\Projects\\node_modules\\react\\index.js"), &root));
+        // Mismatched casing on root
+        assert!(is_excluded(Path::new("c:\\users\\user\\projects\\node_modules\\react\\index.js"), &root));
+        // Forward slashes in path
+        assert!(is_excluded(Path::new("C:/Users/User/Projects/node_modules/react/index.js"), &root));
+        // Subpath match (e.g. dist/output.json glob with forward slash)
+        assert!(is_excluded(Path::new("C:\\Users\\User\\Projects\\dist\\output.json"), &root));
+        assert!(is_excluded(Path::new("C:/Users/User/Projects/dist/output.json"), &root));
+    }
 }
+

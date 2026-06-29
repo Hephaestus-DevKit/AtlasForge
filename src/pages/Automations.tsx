@@ -118,77 +118,75 @@ export function Automations() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Automations</h1>
+      <h1 style={{ fontSize: 26, fontWeight: 800, marginBottom: 24, letterSpacing: "-0.025em" }}>Automations</h1>
 
       {error && (
-        <div style={{ padding: 12, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, marginBottom: 16, color: "#991b1b" }}>
+        <div className="badge badge-danger" style={{ display: "block", width: "100%", padding: 12, borderRadius: "var(--radius-sm)", marginBottom: 20, fontSize: 13 }}>
           {error}
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         {/* Rules */}
-        <div style={{ background: "#fff", borderRadius: 8, padding: 20, border: "1px solid #e2e8f0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
-              <Zap size={16} /> Rules
+        <div className="card" style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+              <Zap size={18} color="var(--color-primary)" /> Rules
             </h2>
             <button
               onClick={() => setShowForm(!showForm)}
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                padding: "6px 12px", background: "#3b82f6", color: "#fff",
-                border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600,
-              }}
+              className="btn btn-primary"
             >
-              <Plus size={14} /> New Rule
+              <Plus size={16} /> New Rule
             </button>
           </div>
 
           {showForm && (
-            <div style={{ padding: 16, background: "#f8fafc", borderRadius: 6, marginBottom: 12, border: "1px solid #e2e8f0" }}>
-              <div style={{ marginBottom: 8 }}>
-                <label htmlFor="af-rule-name" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Rule Name</label>
+            <div className="card" style={{ background: "rgba(255, 255, 255, 0.01)", border: "1px solid var(--border-color)", padding: 16, marginBottom: 16 }}>
+              <div style={{ marginBottom: 12 }}>
+                <label htmlFor="af-rule-name" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Rule Name</label>
                 <input
                   id="af-rule-name"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="e.g., Weekly repository review"
-                  style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14 }}
+                  className="input-field"
                 />
               </div>
-              <div style={{ marginBottom: 8 }}>
-                <label htmlFor="af-rule-desc" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Description</label>
+              <div style={{ marginBottom: 12 }}>
+                <label htmlFor="af-rule-desc" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Description</label>
                 <input
                   id="af-rule-desc"
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   placeholder="Describe what this rule does"
-                  style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14 }}
+                  className="input-field"
                 />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
                 <div>
-                  <label htmlFor="af-rule-trigger" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Trigger</label>
+                  <label htmlFor="af-rule-trigger" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Trigger</label>
                   <input
                     id="af-rule-trigger"
                     value="Schedule"
                     readOnly
-                    style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14, background: "#f1f5f9" }}
+                    className="input-field"
+                    style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
                   />
                 </div>
                 <div>
-                  <label htmlFor="af-rule-action" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Action</label>
+                  <label htmlFor="af-rule-action" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Action</label>
                   <input
                     id="af-rule-action"
                     value="Notification"
                     readOnly
-                    style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14, background: "#f1f5f9" }}
+                    className="input-field"
+                    style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
                   />
                 </div>
               </div>
-              <div style={{ marginBottom: 8 }}>
-                <label htmlFor="af-rule-interval" style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Interval (minutes)</label>
+              <div style={{ marginBottom: 16 }}>
+                <label htmlFor="af-rule-interval" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Interval (minutes)</label>
                 <input
                   id="af-rule-interval"
                   type="number"
@@ -196,15 +194,15 @@ export function Automations() {
                   max={10080}
                   value={form.triggerConfig.intervalMinutes ?? 60}
                   onChange={(e) => setForm({ ...form, triggerConfig: { intervalMinutes: Number(e.target.value) } })}
-                  style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 14 }}
+                  className="input-field"
                 />
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={handleCreate} style={{ padding: "8px 16px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-                  Create Rule
-                </button>
-                <button onClick={() => setShowForm(false)} style={{ padding: "8px 16px", background: "#f1f5f9", color: "#475569", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button onClick={() => setShowForm(false)} className="btn btn-secondary">
                   Cancel
+                </button>
+                <button onClick={handleCreate} className="btn btn-success">
+                  Create Rule
                 </button>
               </div>
             </div>
@@ -217,40 +215,42 @@ export function Automations() {
               description="Create a scheduled notification rule."
             />
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {rules.map((rule) => (
-                <div key={rule.id} style={{ padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                      {rule.name}
-                      <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, fontWeight: 600, background: "#eff6ff", color: "#1d4ed8" }}>
+                <div key={rule.id} style={{ padding: 14, background: "rgba(255, 255, 255, 0.01)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ minWidth: 0, flex: 1, paddingRight: 10 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ color: "var(--text-primary)" }}>{rule.name}</span>
+                      <span className="badge badge-info" style={{ fontSize: 10 }}>
                         every {rule.triggerConfig.intervalMinutes ?? 60} min
                       </span>
                     </div>
                     {rule.description && (
-                      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 2 }}>{rule.description}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{rule.description}</div>
                     )}
-                    <div style={{ fontSize: 12, color: "#64748b" }}>
-                      Scheduled notification
-                      {rule.runCount > 0 && <span style={{ marginLeft: 8 }}>Runs: {rule.runCount}</span>}
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", display: "flex", gap: 12 }}>
+                      <span>Scheduled notification</span>
+                      {rule.runCount > 0 && <span>Runs: {rule.runCount}</span>}
                     </div>
                     {rule.lastTriggeredAt && (
-                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                         Last triggered: {new Date(rule.lastTriggeredAt).toLocaleString()}
                       </div>
                     )}
                   </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
                     <button
                       onClick={() => handleToggle(rule)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: rule.enabled ? "#10b981" : "#94a3b8" }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: rule.enabled ? "var(--color-success)" : "var(--text-muted)", outline: "none" }}
                       title={rule.enabled ? "Disable" : "Enable"}
                     >
-                      {rule.enabled ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                      {rule.enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
                     </button>
                     <button
                       onClick={() => handleDelete(rule.id)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444" }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "var(--color-danger-text)", opacity: 0.7, transition: "opacity var(--transition-fast)", outline: "none" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.7")}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -262,20 +262,20 @@ export function Automations() {
         </div>
 
         {/* Notifications */}
-        <div style={{ background: "#fff", borderRadius: 8, padding: 20, border: "1px solid #e2e8f0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
-              <Bell size={16} /> Notifications
+        <div className="card" style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+              <Bell size={18} color="var(--color-accent)" /> Notifications
               {unreadCount > 0 && (
-                <span style={{ background: "#ef4444", color: "#fff", borderRadius: 10, padding: "1px 6px", fontSize: 11, fontWeight: 600 }}>
-                  {unreadCount}
+                <span className="badge badge-danger" style={{ borderRadius: 12, padding: "2px 8px", fontSize: 10, filter: "drop-shadow(0 0 5px rgba(239, 68, 68, 0.4))" }}>
+                  {unreadCount} new
                 </span>
               )}
             </h2>
             {unreadCount > 0 && (
               <button
                 onClick={handleMarkAllRead}
-                style={{ fontSize: 12, color: "#3b82f6", background: "none", border: "none", cursor: "pointer" }}
+                style={{ fontSize: 12, color: "var(--color-primary-text)", background: "none", border: "none", cursor: "pointer", fontWeight: 600, outline: "none" }}
               >
                 Mark all read
               </button>
@@ -289,28 +289,33 @@ export function Automations() {
               description="Notifications will appear here when automation rules trigger."
             />
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 500, overflow: "auto" }}>
+            <div className="scrollbar-custom" style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 500, overflowY: "auto" }}>
               {notifications.map((n) => (
                 <div
                   key={n.id}
                   style={{
-                    padding: 10, borderRadius: 6, border: "1px solid #e2e8f0",
-                    background: n.read ? "#fff" : "#f0f9ff",
-                    display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+                    padding: 12,
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid var(--border-color)",
+                    background: n.read ? "rgba(255, 255, 255, 0.01)" : "rgba(99, 102, 241, 0.04)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    gap: 10,
                   }}
                 >
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: n.read ? 400 : 600, fontSize: 13, marginBottom: 2 }}>{n.title}</div>
-                    <div style={{ fontSize: 12, color: "#64748b" }}>{n.message}</div>
-                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{new Date(n.createdAt).toLocaleString()}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: n.read ? 600 : 700, fontSize: 13, marginBottom: 2, color: "var(--text-primary)" }}>{n.title}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.4 }}>{n.message}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, fontFamily: "var(--font-mono)" }}>{new Date(n.createdAt).toLocaleString()}</div>
                   </div>
                   {!n.read && (
                     <button
                       onClick={() => handleMarkRead(n.id)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#3b82f6" }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "var(--color-primary)", outline: "none" }}
                       title="Mark as read"
                     >
-                      <Check size={14} />
+                      <Check size={16} />
                     </button>
                   )}
                 </div>

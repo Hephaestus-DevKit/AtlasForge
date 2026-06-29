@@ -12,12 +12,12 @@ export function LoadingSpinner({ message = "Loading..." }: { message?: string })
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        padding: 48,
-        gap: 12,
+        padding: "60px 24px",
+        gap: 16,
       }}
     >
-      <Loader2 size={32} color="#94a3b8" style={{ animation: "af-spin 1s linear infinite" }} />
-      <span style={{ color: "#94a3b8", fontSize: 14 }}>{message}</span>
+      <Loader2 size={36} color="var(--color-primary)" style={{ animation: "af-spin 1.2s cubic-bezier(0.5, 0.1, 0.4, 0.9) infinite", filter: "drop-shadow(0 0 8px rgba(99, 102, 241, 0.3))" }} />
+      <span style={{ color: "var(--text-secondary)", fontSize: 14, fontWeight: 500 }}>{message}</span>
       <style>{`@keyframes af-spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   );
