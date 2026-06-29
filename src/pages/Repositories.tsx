@@ -611,39 +611,39 @@ export function Repositories() {
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: selectedRepoId ? "1fr 420px" : "1fr", gap: 16 }}>
           {/* Repo List */}
-          <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          <div style={{ background: "var(--bg-card)", borderRadius: 8, border: "1px solid var(--border-color)", overflow: "hidden" }}>
             {/* Filter bar */}
-            <div style={{ padding: "10px 12px", borderBottom: "1px solid #e2e8f0", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", background: "#f8fafc" }}>
+            <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-color)", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", background: "var(--bg-app)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 4, flex: "1 1 180px", minWidth: 140 }}>
-                <Search size={14} color="#94a3b8" />
+                <Search size={14} color="var(--text-secondary)" />
                 <input
                   type="text"
                   placeholder="Filter repos..."
                   value={filterText}
                   onChange={(e) => setFilterText(e.target.value)}
-                  style={{ border: "1px solid #e2e8f0", borderRadius: 4, padding: "4px 8px", fontSize: 12, width: "100%", outline: "none" }}
+                  style={{ border: "1px solid var(--border-color)", borderRadius: 4, padding: "4px 8px", fontSize: 12, width: "100%", outline: "none", background: "var(--bg-input)", color: "var(--text-primary)" }}
                 />
               </div>
-              <select value={filterDirty} onChange={(e) => setFilterDirty(e.target.value as any)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+              <select value={filterDirty} onChange={(e) => setFilterDirty(e.target.value as any)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid var(--border-color)", borderRadius: 4, background: "var(--bg-input)", color: "var(--text-primary)" }}>
                 <option value="all">All status</option>
                 <option value="dirty">Dirty only</option>
                 <option value="clean">Clean only</option>
               </select>
-              <select value={filterRemote} onChange={(e) => setFilterRemote(e.target.value as any)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+              <select value={filterRemote} onChange={(e) => setFilterRemote(e.target.value as any)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid var(--border-color)", borderRadius: 4, background: "var(--bg-input)", color: "var(--text-primary)" }}>
                 <option value="all">All remotes</option>
                 <option value="has">Has remote</option>
                 <option value="none">No remote</option>
               </select>
               {availableLanguages.length > 0 && (
-                <select value={filterLanguage} onChange={(e) => setFilterLanguage(e.target.value)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                <select value={filterLanguage} onChange={(e) => setFilterLanguage(e.target.value)} style={{ fontSize: 11, padding: "3px 6px", border: "1px solid var(--border-color)", borderRadius: 4, background: "var(--bg-input)", color: "var(--text-primary)" }}>
                   <option value="all">All languages</option>
                   {availableLanguages.map((l) => <option key={l} value={l}>{l}</option>)}
                 </select>
               )}
-              <label htmlFor="af-filter-noci" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#64748b", cursor: "pointer" }}>
+              <label htmlFor="af-filter-noci" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-secondary)", cursor: "pointer" }}>
                 <input type="checkbox" id="af-filter-noci" checked={filterNoCi} onChange={(e) => setFilterNoCi(e.target.checked)} /> No CI
               </label>
-              <label htmlFor="af-filter-noreadme" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#64748b", cursor: "pointer" }}>
+              <label htmlFor="af-filter-noreadme" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-secondary)", cursor: "pointer" }}>
                 <input type="checkbox" id="af-filter-noreadme" checked={filterNoReadme} onChange={(e) => setFilterNoReadme(e.target.checked)} /> No README
               </label>
             </div>
@@ -651,12 +651,12 @@ export function Repositories() {
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
-                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                  <tr style={{ background: "var(--bg-app)", borderBottom: "1px solid var(--border-color)" }}>
                     <th style={{ width: 32, padding: "10px 8px" }}></th>
                     <SortableHeader label="Path" sortKey="path" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                     <SortableHeader label="Branch" sortKey="branch" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
-                    <th style={{ textAlign: "left", padding: "10px 12px", color: "#64748b", fontWeight: 600 }}>Head SHA</th>
-                    <th style={{ textAlign: "left", padding: "10px 12px", color: "#64748b", fontWeight: 600 }}>Remote</th>
+                    <th style={{ textAlign: "left", padding: "10px 12px", color: "var(--text-secondary)", fontWeight: 600 }}>Head SHA</th>
+                    <th style={{ textAlign: "left", padding: "10px 12px", color: "var(--text-secondary)", fontWeight: 600 }}>Remote</th>
                     <SortableHeader label="Status" sortKey="dirty" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                     <SortableHeader label="Last Commit" sortKey="lastCommit" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                   </tr>
@@ -667,30 +667,30 @@ export function Repositories() {
                     key={repo.id}
                     onClick={() => handleSelectRepo(repo.id)}
                     style={{
-                      borderBottom: "1px solid #f1f5f9",
-                      background: selectedRepoId === repo.id ? "#eff6ff" : "transparent",
+                      borderBottom: "1px solid var(--border-color)",
+                      background: selectedRepoId === repo.id ? "rgba(99, 102, 241, 0.08)" : "transparent",
                       cursor: "pointer",
                     }}
                   >
-                    <td style={{ padding: "10px 4px", textAlign: "center", color: "#94a3b8" }}>
+                    <td style={{ padding: "10px 4px", textAlign: "center", color: "var(--text-secondary)" }}>
                       {selectedRepoId === repo.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </td>
                     <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 12, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {repoName(repo.worktreePath)}
-                      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{repo.worktreePath}</div>
+                      <div style={{ fontSize: 10, color: "var(--text-secondary)", marginTop: 2 }}>{repo.worktreePath}</div>
                     </td>
                     <td style={{ padding: "10px 12px" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                        <GitBranch size={14} color="#64748b" />
+                        <GitBranch size={14} color="var(--text-secondary)" />
                         {repo.currentBranch ?? "—"}
                       </span>
                     </td>
-                    <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, color: "#64748b" }}>
+                    <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, color: "var(--text-secondary)" }}>
                       {repo.headSha ? repo.headSha.slice(0, 8) : "—"}
                     </td>
                     <td style={{ padding: "10px 12px", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {repo.remoteOriginUrl ? (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#3b82f6" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--color-primary)" }}>
                           <ExternalLink size={12} />
                           {repo.remoteOriginUrl.replace(/\.git$/, "").replace(/^https?:\/\//, "")}
                         </span>
@@ -698,17 +698,17 @@ export function Repositories() {
                     </td>
                     <td style={{ padding: "10px 12px" }}>
                       {repo.dirtyState ? (
-                        <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "#fef3c7", color: "#92400e" }}>dirty</span>
+                        <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "var(--color-warning-bg)", color: "var(--color-warning-text)", border: "1px solid var(--color-warning-border)" }}>dirty</span>
                       ) : (
-                        <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "#dcfce7", color: "#166534" }}>clean</span>
+                        <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "var(--color-success-bg)", color: "var(--color-success-text)", border: "1px solid var(--color-success-border)" }}>clean</span>
                       )}
                       {repo.aheadBehind && (repo.aheadBehind.ahead > 0 || repo.aheadBehind.behind > 0) && (
-                        <span style={{ marginLeft: 4, fontSize: 11, color: "#64748b" }}>
+                        <span style={{ marginLeft: 4, fontSize: 11, color: "var(--text-secondary)" }}>
                           ↑{repo.aheadBehind.ahead} ↓{repo.aheadBehind.behind}
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: "10px 12px", color: "#64748b", fontSize: 12 }}>
+                    <td style={{ padding: "10px 12px", color: "var(--text-secondary)", fontSize: 12 }}>
                       {repo.lastCommitAt ? new Date(repo.lastCommitAt).toLocaleDateString() : "—"}
                     </td>
                   </tr>
@@ -717,7 +717,7 @@ export function Repositories() {
             </table>
             </div>
             {filteredRepos.length === 0 && repos.length > 0 && (
-              <div style={{ padding: 24, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+              <div style={{ padding: 24, textAlign: "center", color: "var(--text-secondary)", fontSize: 13 }}>
                 No repositories match current filters.
               </div>
             )}
@@ -725,40 +725,40 @@ export function Repositories() {
 
           {/* Detail Panel */}
           {selectedRepoId && selectedRepo && (
-            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e2e8f0", overflow: "hidden", maxHeight: "calc(100vh - 120px)", display: "flex", flexDirection: "column" }}>
+            <div style={{ background: "var(--bg-card)", borderRadius: 8, border: "1px solid var(--border-color)", overflow: "hidden", maxHeight: "calc(100vh - 120px)", display: "flex", flexDirection: "column" }}>
               {/* Summary Header */}
-              <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0" }}>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-color)" }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
                   <Code2 size={18} color="#3b82f6" />
                   {repoName(selectedRepo.worktreePath)}
                 </h3>
-                <p style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginBottom: 6 }}>
+                <p style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: "monospace", marginBottom: 6 }}>
                   {selectedRepo.worktreePath}
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
                   {selectedRepo.currentBranch && (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "#64748b" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "var(--text-secondary)" }}>
                       <GitBranch size={11} /> {selectedRepo.currentBranch}
                     </span>
                   )}
-                  <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: selectedRepo.dirtyState ? "#fef3c7" : "#dcfce7", color: selectedRepo.dirtyState ? "#92400e" : "#166534" }}>
+                  <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: selectedRepo.dirtyState ? "var(--color-warning-bg)" : "var(--color-success-bg)", color: selectedRepo.dirtyState ? "var(--color-warning-text)" : "var(--color-success-text)", border: selectedRepo.dirtyState ? "1px solid var(--color-warning-border)" : "1px solid var(--color-success-border)" }}>
                     {selectedRepo.dirtyState ? "dirty" : "clean"}
                   </span>
                   {selectedRepo.remoteOriginUrl && (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "#3b82f6" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "var(--color-primary)" }}>
                       <ExternalLink size={11} /> {selectedRepo.remoteOriginUrl.replace(/\.git$/, "").replace(/^https?:\/\//, "").split("/").slice(-2).join("/")}
                     </span>
                   )}
                   {selectedProfile && selectedProfile.languages.length > 0 && (
-                    <span style={{ fontSize: 11, color: "#64748b" }}>{selectedProfile.languages.join(", ")}</span>
+                    <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{selectedProfile.languages.join(", ")}</span>
                   )}
                   {snapshot && (
-                    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: snapshot.score >= 80 ? "#dcfce7" : snapshot.score >= 50 ? "#fef3c7" : "#fef2f2", color: snapshot.score >= 80 ? "#166534" : snapshot.score >= 50 ? "#92400e" : "#991b1b" }}>
+                    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: snapshot.score >= 80 ? "var(--color-success-bg)" : snapshot.score >= 50 ? "var(--color-warning-bg)" : "var(--color-danger-bg)", color: snapshot.score >= 80 ? "var(--color-success-text)" : snapshot.score >= 50 ? "var(--color-warning-text)" : "var(--color-danger-text)", border: snapshot.score >= 80 ? "1px solid var(--color-success-border)" : snapshot.score >= 50 ? "1px solid var(--color-warning-border)" : "1px solid var(--color-danger-border)" }}>
                       Score: {snapshot.score}
                     </span>
                   )}
                   {verifyResult && (
-                    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: verifyResult.success ? "#dcfce7" : "#fef2f2", color: verifyResult.success ? "#166534" : "#991b1b" }}>
+                    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: verifyResult.success ? "var(--color-success-bg)" : "var(--color-danger-bg)", color: verifyResult.success ? "var(--color-success-text)" : "var(--color-danger-text)", border: verifyResult.success ? "1px solid var(--color-success-border)" : "1px solid var(--color-danger-border)" }}>
                       Verify: {verifyResult.success ? "pass" : "fail"}
                     </span>
                   )}
@@ -766,7 +766,7 @@ export function Repositories() {
               </div>
 
               {/* Tabs */}
-              <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", overflow: "auto" }}>
+              <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", overflow: "auto" }}>
                 {tabs.map((tab) => (
                   <button
                     key={tab.key}
@@ -775,8 +775,8 @@ export function Repositories() {
                       display: "flex", alignItems: "center", gap: 4,
                       padding: "8px 12px", border: "none", background: "transparent",
                       cursor: "pointer", fontSize: 12, fontWeight: activeTab === tab.key ? 600 : 400,
-                      color: activeTab === tab.key ? "#3b82f6" : "#64748b",
-                      borderBottom: activeTab === tab.key ? "2px solid #3b82f6" : "2px solid transparent",
+                      color: activeTab === tab.key ? "var(--color-primary)" : "var(--text-secondary)",
+                      borderBottom: activeTab === tab.key ? "2px solid var(--color-primary)" : "2px solid transparent",
                     }}
                   >
                     <tab.icon size={14} />
@@ -896,15 +896,15 @@ function OverviewTab({ profile, snapshot, findings, verifyResult, reindexing, on
     <div>
       {/* Quick Actions */}
       <div style={{ marginBottom: 16 }}>
-        <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Quick Actions</h4>
+        <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Quick Actions</h4>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          <button onClick={onAudit} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "#10b981", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+          <button onClick={onAudit} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "var(--color-success)", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
             <Shield size={12} /> Run Audit
           </button>
-          <button onClick={onReindex} disabled={reindexing} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: reindexing ? "#94a3b8" : "#3b82f6", color: "#fff", border: "none", borderRadius: 4, cursor: reindexing ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600 }}>
+          <button onClick={onReindex} disabled={reindexing} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: reindexing ? "var(--text-muted)" : "var(--color-primary)", color: "#fff", border: "none", borderRadius: 4, cursor: reindexing ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600 }}>
             <RefreshCw size={12} /> {reindexing ? "Indexing..." : "Reindex"}
           </button>
-          <button onClick={onSync} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "#64748b", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+          <button onClick={onSync} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "var(--text-secondary)", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
             <Github size={12} /> Sync GitHub
           </button>
         </div>
@@ -913,10 +913,10 @@ function OverviewTab({ profile, snapshot, findings, verifyResult, reindexing, on
       {/* Profile Summary */}
       {profile && (
         <div style={{ marginBottom: 16 }}>
-          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Tech Stack</h4>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Tech Stack</h4>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {profile.languages.map((l) => <Tag key={l} label={l} color="#3b82f6" />)}
-            {profile.frameworks.map((f) => <Tag key={f} label={f} color="#8b5cf6" />)}
+            {profile.languages.map((l) => <Tag key={l} label={l} color="var(--color-primary)" />)}
+            {profile.frameworks.map((f) => <Tag key={f} label={f} color="var(--color-accent)" />)}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
             <MiniBadge label="README" active={profile.hasReadme} />
@@ -929,30 +929,31 @@ function OverviewTab({ profile, snapshot, findings, verifyResult, reindexing, on
       {/* Health Score Summary */}
       {snapshot && (
         <div style={{ marginBottom: 16 }}>
-          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Health</h4>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Health</h4>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border-color)" }}>
             <div style={{
               width: 44, height: 44, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-              background: snapshot.score >= 80 ? "#dcfce7" : snapshot.score >= 50 ? "#fef3c7" : "#fef2f2",
-              color: snapshot.score >= 80 ? "#166534" : snapshot.score >= 50 ? "#92400e" : "#991b1b",
+              background: snapshot.score >= 80 ? "var(--color-success-bg)" : snapshot.score >= 50 ? "var(--color-warning-bg)" : "var(--color-danger-bg)",
+              color: snapshot.score >= 80 ? "var(--color-success-text)" : snapshot.score >= 50 ? "var(--color-warning-text)" : "var(--color-danger-text)",
+              border: snapshot.score >= 80 ? "1px solid var(--color-success-border)" : snapshot.score >= 50 ? "1px solid var(--color-warning-border)" : "1px solid var(--color-danger-border)",
               fontSize: 16, fontWeight: 700,
             }}>
               {snapshot.score}
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 600 }}>Score</div>
-              <div style={{ fontSize: 11, color: "#94a3b8" }}>{findings.length} findings</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>Score</div>
+              <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>{findings.length} findings</div>
             </div>
           </div>
           {Object.keys(categoryScores).length > 0 && (
             <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
               {Object.entries(categoryScores).map(([cat, cs]) => (
                 <div key={cat} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-                  <span style={{ minWidth: 90, color: "#475569", fontWeight: 500 }}>{cat}</span>
-                  <div style={{ flex: 1, height: 6, background: "#e2e8f0", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ width: `${cs.maxScore > 0 ? (cs.score / cs.maxScore) * 100 : 0}%`, height: "100%", background: cs.score / (cs.maxScore || 1) >= 0.8 ? "#10b981" : cs.score / (cs.maxScore || 1) >= 0.5 ? "#f59e0b" : "#ef4444", borderRadius: 3 }} />
+                  <span style={{ minWidth: 90, color: "var(--text-secondary)", fontWeight: 500 }}>{cat}</span>
+                  <div style={{ flex: 1, height: 6, background: "var(--border-color)", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ width: `${cs.maxScore > 0 ? (cs.score / cs.maxScore) * 100 : 0}%`, height: "100%", background: cs.score / (cs.maxScore || 1) >= 0.8 ? "var(--color-success)" : cs.score / (cs.maxScore || 1) >= 0.5 ? "var(--color-warning)" : "var(--color-danger)", borderRadius: 3 }} />
                   </div>
-                  <span style={{ color: "#64748b", minWidth: 32, textAlign: "right" }}>{cs.score}/{cs.maxScore}</span>
+                  <span style={{ color: "var(--text-secondary)", minWidth: 32, textAlign: "right" }}>{cs.score}/{cs.maxScore}</span>
                 </div>
               ))}
             </div>
@@ -963,14 +964,14 @@ function OverviewTab({ profile, snapshot, findings, verifyResult, reindexing, on
       {/* Verification Summary */}
       {verifyResult && (
         <div style={{ marginBottom: 16 }}>
-          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Last Verification</h4>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 8, background: verifyResult.success ? "#f0fdf4" : "#fef2f2", borderRadius: 4, border: `1px solid ${verifyResult.success ? "#bbf7d0" : "#fca5a5"}` }}>
-            {verifyResult.success ? <CheckCircle2 size={14} color="#166534" /> : <XCircle size={14} color="#991b1b" />}
-            <span style={{ fontSize: 12, fontWeight: 600, color: verifyResult.success ? "#166534" : "#991b1b" }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Last Verification</h4>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 8, background: verifyResult.success ? "var(--color-success-bg)" : "var(--color-danger-bg)", borderRadius: 4, border: `1px solid ${verifyResult.success ? "var(--color-success-border)" : "var(--color-danger-border)"}` }}>
+            {verifyResult.success ? <CheckCircle2 size={14} color="var(--color-success-text)" /> : <XCircle size={14} color="var(--color-danger-text)" />}
+            <span style={{ fontSize: 12, fontWeight: 600, color: verifyResult.success ? "var(--color-success-text)" : "var(--color-danger-text)" }}>
               {verifyResult.success ? "Passed" : "Failed"}
             </span>
             {verifyResult.exitCode !== undefined && (
-              <span style={{ fontSize: 11, color: "#64748b" }}>exit: {verifyResult.exitCode}</span>
+              <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>exit: {verifyResult.exitCode}</span>
             )}
           </div>
         </div>
@@ -979,21 +980,21 @@ function OverviewTab({ profile, snapshot, findings, verifyResult, reindexing, on
       {/* Recommended Tasks */}
       {recommendedTasks.length > 0 && (
         <div>
-          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Recommended Tasks</h4>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Recommended Tasks</h4>
           {recommendedTasks.map((task, i) => (
-            <div key={i} style={{ padding: 8, background: "#f8fafc", borderRadius: 4, marginBottom: 4, border: "1px solid #e2e8f0", fontSize: 12 }}>
+            <div key={i} style={{ padding: 8, background: "rgba(255,255,255,0.02)", borderRadius: 4, marginBottom: 4, border: "1px solid var(--border-color)", fontSize: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <SeverityBadge severity={task.priority} />
-                <span style={{ fontWeight: 600 }}>{task.title}</span>
+                <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{task.title}</span>
               </div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{task.description}</div>
+              <div style={{ color: "var(--text-secondary)", fontSize: 11, marginTop: 2 }}>{task.description}</div>
             </div>
           ))}
         </div>
       )}
 
       {!profile && !snapshot && !verifyResult && (
-        <div style={{ textAlign: "center", padding: 24, color: "#94a3b8" }}>
+        <div style={{ textAlign: "center", padding: 24, color: "var(--text-secondary)" }}>
           <Activity size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
           <p style={{ fontSize: 13 }}>No data yet for this repository.</p>
           <p style={{ fontSize: 11 }}>Use the actions above to audit, index, or sync this repo.</p>
@@ -1008,7 +1009,7 @@ function OverviewTab({ profile, snapshot, findings, verifyResult, reindexing, on
 function ProfileTab({ profile }: { profile: RepoProfile | null }) {
   if (!profile) {
     return (
-      <div style={{ textAlign: "center", padding: 24, color: "#94a3b8" }}>
+      <div style={{ textAlign: "center", padding: 24, color: "var(--text-secondary)" }}>
         <Shield size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
         <p style={{ fontSize: 13 }}>No profile available</p>
         <p style={{ fontSize: 11 }}>Run a scan or click "Refresh Profiles" to detect tech stack.</p>
@@ -1018,64 +1019,64 @@ function ProfileTab({ profile }: { profile: RepoProfile | null }) {
 
   return (
     <>
-      <ProfileSection icon={Code2} title="Languages" color="#3b82f6">
+      <ProfileSection icon={Code2} title="Languages" color="var(--color-primary)">
         {profile.languages.length > 0 ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {profile.languages.map((lang) => <Tag key={lang} label={lang} color="#3b82f6" />)}
+            {profile.languages.map((lang) => <Tag key={lang} label={lang} color="var(--color-primary)" />)}
           </div>
         ) : <EmptyText>No languages detected</EmptyText>}
       </ProfileSection>
 
-      <ProfileSection icon={Package} title="Frameworks" color="#8b5cf6">
+      <ProfileSection icon={Package} title="Frameworks" color="var(--color-accent)">
         {profile.frameworks.length > 0 ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {profile.frameworks.map((fw) => <Tag key={fw} label={fw} color="#8b5cf6" />)}
+            {profile.frameworks.map((fw) => <Tag key={fw} label={fw} color="var(--color-accent)" />)}
           </div>
         ) : <EmptyText>No frameworks detected</EmptyText>}
       </ProfileSection>
 
-      <ProfileSection icon={Layers} title="Package Managers" color="#10b981">
+      <ProfileSection icon={Layers} title="Package Managers" color="var(--color-success)">
         {profile.packageManagers.length > 0 ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {profile.packageManagers.map((pm) => <Tag key={pm} label={pm} color="#10b981" />)}
+            {profile.packageManagers.map((pm) => <Tag key={pm} label={pm} color="var(--color-success)" />)}
           </div>
         ) : <EmptyText>No package managers detected</EmptyText>}
       </ProfileSection>
 
-      <ProfileSection icon={Terminal} title="Scripts" color="#f59e0b">
+      <ProfileSection icon={Terminal} title="Scripts" color="var(--color-warning)">
         {Object.keys(profile.scripts).length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             {Object.entries(profile.scripts).map(([key, value]) => (
               <div key={key} style={{ fontSize: 11, display: "flex", gap: 6 }}>
-                <span style={{ color: "#f59e0b", fontWeight: 600, minWidth: 80 }}>{key.replace(/^(npm|cargo|python):/, "")}</span>
-                <span style={{ color: "#64748b", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+                <span style={{ color: "var(--color-warning-text)", fontWeight: 600, minWidth: 80 }}>{key.replace(/^(npm|cargo|python):/, "")}</span>
+                <span style={{ color: "var(--text-secondary)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
               </div>
             ))}
           </div>
         ) : <EmptyText>No scripts detected</EmptyText>}
       </ProfileSection>
 
-      <ProfileSection icon={RefreshCw} title="CI Systems" color="#06b6d4">
+      <ProfileSection icon={RefreshCw} title="CI Systems" color="var(--color-info)">
         {profile.ciSystems.length > 0 ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {profile.ciSystems.map((ci) => <Tag key={ci} label={ci} color="#06b6d4" />)}
+            {profile.ciSystems.map((ci) => <Tag key={ci} label={ci} color="var(--color-info)" />)}
           </div>
         ) : <EmptyText>No CI systems detected</EmptyText>}
       </ProfileSection>
 
-      <ProfileSection icon={FileText} title="Documentation" color="#64748b">
+      <ProfileSection icon={FileText} title="Documentation" color="var(--text-secondary)">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <MiniBadge label="README" active={profile.hasReadme} />
           <MiniBadge label="LICENSE" active={profile.hasLicense} />
           {profile.licenseType && (
-            <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "#dbeafe", color: "#1e40af" }}>
+            <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: "var(--color-info-bg)", color: "var(--color-info-text)", border: "1px solid var(--color-info-border)" }}>
               {profile.licenseType}
             </span>
           )}
         </div>
       </ProfileSection>
 
-      <div style={{ marginTop: 16, fontSize: 10, color: "#94a3b8" }}>
+      <div style={{ marginTop: 16, fontSize: 10, color: "var(--text-secondary)" }}>
         Profiled: {new Date(profile.detectedAt).toLocaleString()}
       </div>
     </>
@@ -1104,7 +1105,7 @@ function AuditTab({ snapshot, findings, auditing, onAudit }: {
         disabled={auditing}
         style={{
           display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
-          background: auditing ? "#94a3b8" : "#10b981", color: "#fff",
+          background: auditing ? "var(--text-muted)" : "var(--color-success)", color: "#fff",
           border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, marginBottom: 16,
         }}
       >
@@ -1115,26 +1116,27 @@ function AuditTab({ snapshot, findings, auditing, onAudit }: {
       {snapshot && (
         <>
           {/* Overall Score */}
-          <div style={{ padding: 16, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", marginBottom: 12 }}>
+          <div style={{ padding: 16, background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border-color)", marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
               <div style={{
                 width: 56, height: 56, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                background: snapshot.score >= 80 ? "#dcfce7" : snapshot.score >= 50 ? "#fef3c7" : "#fef2f2",
-                color: snapshot.score >= 80 ? "#166534" : snapshot.score >= 50 ? "#92400e" : "#991b1b",
+                background: snapshot.score >= 80 ? "var(--color-success-bg)" : snapshot.score >= 50 ? "var(--color-warning-bg)" : "var(--color-danger-bg)",
+                color: snapshot.score >= 80 ? "var(--color-success-text)" : snapshot.score >= 50 ? "var(--color-warning-text)" : "var(--color-danger-text)",
+                border: snapshot.score >= 80 ? "1px solid var(--color-success-border)" : snapshot.score >= 50 ? "1px solid var(--color-warning-border)" : "1px solid var(--color-danger-border)",
                 fontSize: 20, fontWeight: 700,
               }}>
                 {snapshot.score}
               </div>
               <div>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>Health Score</div>
-                <div style={{ fontSize: 12, color: "#64748b" }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>Health Score</div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                   {snapshot.score >= 80 ? "Good — repo meets most quality standards" :
                    snapshot.score >= 50 ? "Fair — some areas need attention" :
                    "Needs work — significant issues found"}
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: 11, color: "#94a3b8" }}>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
               Checked: {new Date(snapshot.createdAt).toLocaleString()} · Weighted average across 10 categories
             </div>
           </div>
@@ -1142,24 +1144,24 @@ function AuditTab({ snapshot, findings, auditing, onAudit }: {
           {/* Category Breakdown */}
           {categoryScores && (
             <div style={{ marginBottom: 12 }}>
-              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Category Breakdown</h4>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>Category Breakdown</h4>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
                 {Object.entries(categoryScores).sort((a, b) => b[1].weight - a[1].weight).map(([cat, cs]) => (
-                  <div key={cat} style={{ padding: 8, background: "#fff", borderRadius: 4, border: "1px solid #e2e8f0", fontSize: 12 }}>
+                  <div key={cat} style={{ padding: 8, background: "var(--bg-input)", borderRadius: 4, border: "1px solid var(--border-color)", fontSize: 12 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{cat.replace(/_/g, " ")}</span>
-                      <span style={{ fontWeight: 700, color: cs.score >= 80 ? "#166534" : cs.score >= 50 ? "#92400e" : "#991b1b" }}>
+                      <span style={{ fontWeight: 600, textTransform: "capitalize", color: "var(--text-primary)" }}>{cat.replace(/_/g, " ")}</span>
+                      <span style={{ fontWeight: 700, color: cs.score >= 80 ? "var(--color-success-text)" : cs.score >= 50 ? "var(--color-warning-text)" : "var(--color-danger-text)" }}>
                         {cs.score}/{cs.maxScore}
                       </span>
                     </div>
-                    <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ height: 4, background: "var(--border-color)", borderRadius: 2, overflow: "hidden" }}>
                       <div style={{
                         width: `${(cs.score / cs.maxScore) * 100}%`, height: "100%",
-                        background: cs.score >= 80 ? "#22c55e" : cs.score >= 50 ? "#f59e0b" : "#ef4444",
+                        background: cs.score >= 80 ? "var(--color-success)" : cs.score >= 50 ? "var(--color-warning)" : "var(--color-danger)",
                         borderRadius: 2,
                       }} />
                     </div>
-                    <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+                    <div style={{ fontSize: 10, color: "var(--text-secondary)", marginTop: 2 }}>
                       weight: {cs.weight.toFixed(1)} · {cs.findings.length} finding{cs.findings.length !== 1 ? "s" : ""}
                     </div>
                   </div>
@@ -1171,16 +1173,16 @@ function AuditTab({ snapshot, findings, auditing, onAudit }: {
           {/* Recommended Tasks */}
           {recommendedTasks.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Recommended Actions ({recommendedTasks.length})</h4>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>Recommended Actions ({recommendedTasks.length})</h4>
               {recommendedTasks.map((task, i) => (
-                <div key={i} style={{ padding: 8, background: "#fffbeb", borderRadius: 4, marginBottom: 4, border: "1px solid #fde68a", fontSize: 12 }}>
+                <div key={i} style={{ padding: 8, background: "var(--color-warning-bg)", borderRadius: 4, marginBottom: 4, border: "1px solid var(--color-warning-border)", fontSize: 12 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
                     <SeverityBadge severity={task.priority === "high" ? "critical" : task.priority === "medium" ? "warning" : "info"} />
-                    <span style={{ fontWeight: 600 }}>{task.title}</span>
-                    <span style={{ color: "#64748b" }}>— {task.category}</span>
+                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{task.title}</span>
+                    <span style={{ color: "var(--text-secondary)" }}>— {task.category}</span>
                   </div>
-                  <div style={{ color: "#475569" }}>{task.description}</div>
-                  {task.autoFixable && <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2 }}>⚡ Auto-fixable</div>}
+                  <div style={{ color: "var(--text-secondary)" }}>{task.description}</div>
+                  {task.autoFixable && <div style={{ fontSize: 11, color: "var(--color-primary)", marginTop: 2 }}>⚡ Auto-fixable</div>}
                 </div>
               ))}
             </div>
@@ -1189,17 +1191,17 @@ function AuditTab({ snapshot, findings, auditing, onAudit }: {
           {/* Findings */}
           {findings.length > 0 && (
             <div>
-              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Findings ({findings.length})</h4>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>Findings ({findings.length})</h4>
               {findings.map((f) => (
-                <div key={f.id} style={{ padding: 8, background: "#fff", borderRadius: 4, marginBottom: 4, border: "1px solid #e2e8f0", fontSize: 12 }}>
+                <div key={f.id} style={{ padding: 8, background: "var(--bg-input)", borderRadius: 4, marginBottom: 4, border: "1px solid var(--border-color)", fontSize: 12 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
                     <SeverityBadge severity={f.severity} />
-                    <span style={{ fontWeight: 600 }}>{f.title}</span>
-                    <span style={{ color: "#64748b" }}> - {f.category}</span>
+                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{f.title}</span>
+                    <span style={{ color: "var(--text-secondary)" }}> - {f.category}</span>
                   </div>
-                  <div style={{ color: "#475569", marginBottom: 2 }}>{f.description}</div>
-                  {f.filePath && <div style={{ fontFamily: "monospace", fontSize: 11, color: "#94a3b8" }}>{f.filePath}</div>}
-                  {f.suggestedFix && <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2 }}>💡 {f.suggestedFix}</div>}
+                  <div style={{ color: "var(--text-secondary)", marginBottom: 2 }}>{f.description}</div>
+                  {f.filePath && <div style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-secondary)" }}>{f.filePath}</div>}
+                  {f.suggestedFix && <div style={{ fontSize: 11, color: "var(--color-primary)", marginTop: 2 }}>💡 {f.suggestedFix}</div>}
                 </div>
               ))}
             </div>
@@ -1208,7 +1210,7 @@ function AuditTab({ snapshot, findings, auditing, onAudit }: {
       )}
 
       {!snapshot && !auditing && (
-        <p style={{ color: "#94a3b8", fontSize: 13 }}>Click "Run Audit" to check repository health across 10 categories: runnable, tests, CI, docs, dependencies, security, release, git hygiene, public surface, and platform compatibility.</p>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>Click "Run Audit" to check repository health across 10 categories: runnable, tests, CI, docs, dependencies, security, release, git hygiene, public surface, and platform compatibility.</p>
       )}
     </>
   );
@@ -1239,12 +1241,13 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
         </h3>
 
         {/* Provider selector */}
+        {/* Provider selector */}
         <div style={{ marginBottom: 12 }}>
-          <label htmlFor="af-ai-provider" style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 4 }}>
+          <label htmlFor="af-ai-provider" style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
             AI Provider
           </label>
           {aiProviders.length === 0 ? (
-            <p style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
+            <p style={{ fontSize: 11, color: "var(--text-secondary)", fontStyle: "italic" }}>
               No AI providers configured. Add API keys in Settings.
             </p>
           ) : (
@@ -1252,7 +1255,7 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
               id="af-ai-provider"
               value={selectedProviderId}
               onChange={(e) => onSelectProvider(e.target.value)}
-              style={{ fontSize: 12, padding: "4px 8px", borderRadius: 4, border: "1px solid #e2e8f0", width: "100%" }}
+              style={{ fontSize: 12, padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border-color)", width: "100%", background: "var(--bg-input)", color: "var(--text-primary)" }}
             >
               <option value="">Select provider...</option>
               {aiProviders.map((p) => (
@@ -1263,9 +1266,9 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
         </div>
 
         {/* Generate Fix Plan */}
-        <div style={{ marginBottom: 12, padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
-          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 6 }}>Generate Fix Plan</h4>
-          <p style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
+        <div style={{ marginBottom: 12, padding: 12, background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border-color)" }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>Generate Fix Plan</h4>
+          <p style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
             Analyze audit findings and generate a prioritized fix plan using AI.
           </p>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1274,8 +1277,8 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
               disabled={!selectedProviderId || !hasSnapshot || generatingPlan}
               style={{
                 display: "flex", alignItems: "center", gap: 4, padding: "6px 12px",
-                background: (!selectedProviderId || !hasSnapshot || generatingPlan) ? "#e2e8f0" : "#7c3aed",
-                color: (!selectedProviderId || !hasSnapshot || generatingPlan) ? "#94a3b8" : "#fff",
+                background: (!selectedProviderId || !hasSnapshot || generatingPlan) ? "var(--border-color)" : "var(--color-accent)",
+                color: (!selectedProviderId || !hasSnapshot || generatingPlan) ? "var(--text-secondary)" : "#fff",
                 border: "none", borderRadius: 4, cursor: (!selectedProviderId || !hasSnapshot || generatingPlan) ? "not-allowed" : "pointer",
                 fontSize: 12, fontWeight: 600,
               }}
@@ -1288,8 +1291,8 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
               disabled={!hasSnapshot || previewingContext}
               style={{
                 display: "flex", alignItems: "center", gap: 4, padding: "6px 12px",
-                background: (!hasSnapshot || previewingContext) ? "#e2e8f0" : "#3b82f6",
-                color: (!hasSnapshot || previewingContext) ? "#94a3b8" : "#fff",
+                background: (!hasSnapshot || previewingContext) ? "var(--border-color)" : "var(--color-primary)",
+                color: (!hasSnapshot || previewingContext) ? "var(--text-secondary)" : "#fff",
                 border: "none", borderRadius: 4, cursor: (!hasSnapshot || previewingContext) ? "not-allowed" : "pointer",
                 fontSize: 12, fontWeight: 600,
               }}
@@ -1299,56 +1302,56 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
             </button>
           </div>
           {!hasSnapshot && (
-            <p style={{ fontSize: 10, color: "#f59e0b", marginTop: 4 }}>Run a health audit first to enable fix plan generation.</p>
+            <p style={{ fontSize: 10, color: "var(--color-warning-text)", marginTop: 4 }}>Run a health audit first to enable fix plan generation.</p>
           )}
         </div>
 
         {/* Context Preview */}
         {contextPreview && (
-          <div style={{ marginBottom: 12, padding: 12, background: "#eff6ff", borderRadius: 6, border: "1px solid #bfdbfe" }}>
+          <div style={{ marginBottom: 12, padding: 12, background: "var(--color-info-bg)", borderRadius: 6, border: "1px solid var(--color-info-border)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-              <Eye size={14} color="#3b82f6" />
-              <h4 style={{ fontSize: 12, fontWeight: 600, color: "#1e40af", margin: 0 }}>Context Preview</h4>
+              <Eye size={14} color="var(--color-info-text)" />
+              <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--color-info-text)", margin: 0 }}>Context Preview</h4>
             </div>
-            <div style={{ fontSize: 11, color: "#475569", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
               <strong>Purpose:</strong> {contextPreview.purpose}
             </div>
-            <div style={{ fontSize: 11, color: "#475569", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
               <strong>Tokens:</strong> ~{contextPreview.totalTokensEstimate} / {contextPreview.maxTokens} max
             </div>
             {contextPreview.secretsFound.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, padding: "4px 8px", background: "#fef3c7", borderRadius: 4, border: "1px solid #fde68a" }}>
-                <AlertTriangle size={12} color="#92400e" />
-                <span style={{ fontSize: 11, color: "#92400e", fontWeight: 600 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, padding: "4px 8px", background: "var(--color-warning-bg)", borderRadius: 4, border: "1px solid var(--color-warning-border)" }}>
+                <AlertTriangle size={12} color="var(--color-warning-text)" />
+                <span style={{ fontSize: 11, color: "var(--color-warning-text)", fontWeight: 600 }}>
                   {contextPreview.secretsFound.length} secret(s) detected — will be redacted before sending to AI
                 </span>
               </div>
             )}
             {contextPreview.secretCountAfterRedaction > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, padding: "4px 8px", background: "#fef2f2", borderRadius: 4, border: "1px solid #fca5a5" }}>
-                <AlertTriangle size={12} color="#991b1b" />
-                <span style={{ fontSize: 11, color: "#991b1b", fontWeight: 600 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, padding: "4px 8px", background: "var(--color-danger-bg)", borderRadius: 4, border: "1px solid var(--color-danger-border)" }}>
+                <AlertTriangle size={12} color="var(--color-danger-text)" />
+                <span style={{ fontSize: 11, color: "var(--color-danger-text)", fontWeight: 600 }}>
                   {contextPreview.secretCountAfterRedaction} secret(s) remain after redaction — review before proceeding
                 </span>
               </div>
             )}
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4, fontWeight: 600 }}>Sections:</div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4, fontWeight: 600 }}>Sections:</div>
             {contextPreview.sections.map((s, i) => (
-              <div key={i} style={{ padding: "6px 8px", marginBottom: 4, background: "#fff", borderRadius: 4, border: "1px solid #e2e8f0" }}>
+              <div key={i} style={{ padding: "6px 8px", marginBottom: 4, background: "var(--bg-input)", borderRadius: 4, border: "1px solid var(--border-color)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "#334155" }}>{s.label}</span>
-                  <span style={{ fontSize: 10, color: "#94a3b8" }}>~{s.tokensEstimate} tokens</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)" }}>{s.label}</span>
+                  <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>~{s.tokensEstimate} tokens</span>
                 </div>
-                <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>Source: {s.source}</div>
-                <pre style={{ fontSize: 10, color: "#475569", background: "#f8fafc", padding: 4, borderRadius: 3, overflow: "auto", maxHeight: 80, whiteSpace: "pre-wrap", margin: 0 }}>
+                <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 2 }}>Source: {s.source}</div>
+                <pre style={{ fontSize: 10, color: "var(--text-secondary)", background: "var(--bg-app)", padding: 4, borderRadius: 3, overflow: "auto", maxHeight: 80, whiteSpace: "pre-wrap", margin: 0 }}>
                   {s.contentPreview}
                 </pre>
               </div>
             ))}
             {contextPreview.promptPreview && (
               <details style={{ marginTop: 8 }}>
-                <summary style={{ fontSize: 11, color: "#3b82f6", cursor: "pointer", fontWeight: 600 }}>Full Prompt Preview</summary>
-                <pre style={{ fontSize: 10, color: "#475569", background: "#fff", padding: 8, borderRadius: 4, overflow: "auto", maxHeight: 300, whiteSpace: "pre-wrap", marginTop: 4 }}>
+                <summary style={{ fontSize: 11, color: "var(--color-primary)", cursor: "pointer", fontWeight: 600 }}>Full Prompt Preview</summary>
+                <pre style={{ fontSize: 10, color: "var(--text-secondary)", background: "var(--bg-input)", padding: 8, borderRadius: 4, overflow: "auto", maxHeight: 300, whiteSpace: "pre-wrap", marginTop: 4 }}>
                   {contextPreview.promptPreview}
                 </pre>
               </details>
@@ -1357,10 +1360,10 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
         )}
 
         {/* Propose Fix */}
-        <div style={{ marginBottom: 12, padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
-          <h4 style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 6 }}>Propose a Fix</h4>
+        <div style={{ marginBottom: 12, padding: 12, background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border-color)" }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>Propose a Fix</h4>
           <div style={{ marginBottom: 8 }}>
-            <label htmlFor="af-fix-instruction" style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 4 }}>
+            <label htmlFor="af-fix-instruction" style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
               Instruction
             </label>
             <textarea
@@ -1369,11 +1372,11 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
               onChange={(e) => onFixInstructionChange(e.target.value)}
               placeholder="Describe what you want to fix (e.g., 'Fix the missing return type in src/main.ts')"
               rows={3}
-              style={{ fontSize: 12, padding: "6px 8px", borderRadius: 4, border: "1px solid #e2e8f0", width: "100%", resize: "vertical", fontFamily: "inherit" }}
+              style={{ fontSize: 12, padding: "6px 8px", borderRadius: 4, border: "1px solid var(--border-color)", width: "100%", resize: "vertical", fontFamily: "inherit", background: "var(--bg-input)", color: "var(--text-primary)" }}
             />
           </div>
           <div style={{ marginBottom: 8 }}>
-            <label htmlFor="af-fix-target" style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 4 }}>
+            <label htmlFor="af-fix-target" style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
               Target File (optional)
             </label>
             <input
@@ -1381,7 +1384,7 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
               value={fixTargetFile}
               onChange={(e) => onFixTargetFileChange(e.target.value)}
               placeholder="e.g., src/main.ts"
-              style={{ fontSize: 12, padding: "4px 8px", borderRadius: 4, border: "1px solid #e2e8f0", width: "100%" }}
+              style={{ fontSize: 12, padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border-color)", width: "100%", background: "var(--bg-input)", color: "var(--text-primary)" }}
             />
           </div>
           <button
@@ -1389,8 +1392,8 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
             disabled={!selectedProviderId || !fixInstruction.trim() || proposingFix}
             style={{
               display: "flex", alignItems: "center", gap: 4, padding: "6px 12px",
-              background: (!selectedProviderId || !fixInstruction.trim() || proposingFix) ? "#e2e8f0" : "#7c3aed",
-              color: (!selectedProviderId || !fixInstruction.trim() || proposingFix) ? "#94a3b8" : "#fff",
+              background: (!selectedProviderId || !fixInstruction.trim() || proposingFix) ? "var(--border-color)" : "var(--color-accent)",
+              color: (!selectedProviderId || !fixInstruction.trim() || proposingFix) ? "var(--text-secondary)" : "#fff",
               border: "none", borderRadius: 4, cursor: (!selectedProviderId || !fixInstruction.trim() || proposingFix) ? "not-allowed" : "pointer",
               fontSize: 12, fontWeight: 600,
             }}
@@ -1403,18 +1406,18 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
 
       {/* Fix Plans list */}
       <div>
-        <h4 style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 8 }}>Fix Plans</h4>
+        <h4 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>Fix Plans</h4>
         {fixPlans.length === 0 ? (
           <EmptyText>No fix plans generated yet.</EmptyText>
         ) : (
           fixPlans.map((fp) => (
-            <div key={fp.id} style={{ padding: 10, marginBottom: 8, background: "#fff", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+            <div key={fp.id} style={{ padding: 10, marginBottom: 8, background: "var(--bg-input)", borderRadius: 6, border: "1px solid var(--border-color)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                <Wand2 size={12} color="#7c3aed" />
-                <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{fp.artifactType}: {fp.title}</span>
+                <Wand2 size={12} color="var(--color-accent)" />
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{fp.artifactType}: {fp.title}</span>
               </div>
               {fp.content && (
-                <pre style={{ fontSize: 11, color: "#475569", background: "#f8fafc", padding: 8, borderRadius: 4, overflow: "auto", maxHeight: 200, whiteSpace: "pre-wrap" }}>
+                <pre style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--bg-app)", padding: 8, borderRadius: 4, overflow: "auto", maxHeight: 200, whiteSpace: "pre-wrap" }}>
                   {typeof fp.content === "string" ? fp.content : JSON.stringify(fp.content, null, 2)}
                 </pre>
               )}
@@ -1436,7 +1439,7 @@ function GitHubTab({ integration, evidence, syncing, onSync }: {
 }) {
   if (!integration) {
     return (
-      <div style={{ textAlign: "center", padding: 24, color: "#94a3b8" }}>
+      <div style={{ textAlign: "center", padding: 24, color: "var(--text-secondary)" }}>
         <Github size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
         <p style={{ fontSize: 13 }}>No GitHub integration detected.</p>
         <p style={{ fontSize: 11 }}>Ensure this repo has a GitHub remote and gh CLI is authenticated.</p>
@@ -1446,16 +1449,16 @@ function GitHubTab({ integration, evidence, syncing, onSync }: {
 
   return (
     <>
-      <div style={{ padding: 16, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", marginBottom: 12 }}>
+      <div style={{ padding: 16, background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border-color)", marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <Github size={16} />
           <span style={{ fontWeight: 600, fontSize: 14 }}>{integration.githubOwner}/{integration.githubRepo}</span>
         </div>
         {integration.defaultBranch && (
-          <div style={{ fontSize: 12, color: "#64748b" }}>Default branch: {integration.defaultBranch}</div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>Default branch: {integration.defaultBranch}</div>
         )}
         {integration.lastSyncedAt && (
-          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>
             Last synced: {new Date(integration.lastSyncedAt).toLocaleString()}
           </div>
         )}
@@ -1466,8 +1469,8 @@ function GitHubTab({ integration, evidence, syncing, onSync }: {
         disabled={syncing}
         style={{
           display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
-          background: syncing ? "#94a3b8" : "#f1f5f9", color: "#475569",
-          border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600,
+          background: syncing ? "var(--text-muted)" : "var(--bg-input)", color: "var(--text-primary)",
+          border: "1px solid var(--border-color)", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600,
         }}
       >
         <RefreshCw size={14} />
@@ -1477,7 +1480,7 @@ function GitHubTab({ integration, evidence, syncing, onSync }: {
       {evidence && (
         <div style={{ marginTop: 16, display: "grid", gap: 16 }}>
           {evidence.syncErrors.length > 0 && (
-            <div style={{ padding: 10, borderLeft: "3px solid #dc2626", background: "#fef2f2", color: "#991b1b", fontSize: 11 }}>
+            <div style={{ padding: 10, borderLeft: "3px solid var(--color-danger)", background: "var(--color-danger-bg)", color: "var(--color-danger-text)", fontSize: 11 }}>
               {evidence.syncErrors.join("; ")}
             </div>
           )}
@@ -1520,20 +1523,20 @@ function GitHubEvidenceList({ title, items }: {
 }) {
   return (
     <section>
-      <h4 style={{ margin: "0 0 6px", fontSize: 12, color: "#334155" }}>{title}</h4>
+      <h4 style={{ margin: "0 0 6px", fontSize: 12, color: "var(--text-primary)" }}>{title}</h4>
       {items.length === 0 ? (
-        <p style={{ margin: 0, fontSize: 11, color: "#94a3b8" }}>No synced records.</p>
+        <p style={{ margin: 0, fontSize: 11, color: "var(--text-secondary)" }}>No synced records.</p>
       ) : (
-        <div style={{ borderTop: "1px solid #e2e8f0" }}>
+        <div style={{ borderTop: "1px solid var(--border-color)" }}>
           {items.map((item) => (
-            <div key={item.id} style={{ padding: "7px 0", borderBottom: "1px solid #e2e8f0" }}>
+            <div key={item.id} style={{ padding: "7px 0", borderBottom: "1px solid var(--border-color)" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, fontWeight: 600, color: "#334155" }}>
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, fontWeight: 600, color: "var(--text-primary)" }}>
                   {item.label}
                 </span>
-                {item.url && <ExternalLink size={12} color="#64748b" aria-label={item.url} />}
+                {item.url && <ExternalLink size={12} color="var(--text-secondary)" aria-label={item.url} />}
               </div>
-              {item.meta && <div style={{ marginTop: 2, fontSize: 10, color: "#94a3b8" }}>{item.meta}</div>}
+              {item.meta && <div style={{ marginTop: 2, fontSize: 10, color: "var(--text-secondary)" }}>{item.meta}</div>}
             </div>
           ))}
         </div>
@@ -1546,13 +1549,13 @@ function GitHubEvidenceList({ title, items }: {
 
 function RiskBadge({ level }: { level: string }) {
   const colors: Record<string, { bg: string; fg: string }> = {
-    high: { bg: "#fef2f2", fg: "#991b1b" },
-    medium: { bg: "#fef3c7", fg: "#92400e" },
-    low: { bg: "#dbeafe", fg: "#1e40af" },
+    high: { bg: "var(--color-danger-bg)", fg: "var(--color-danger-text)" },
+    medium: { bg: "var(--color-warning-bg)", fg: "var(--color-warning-text)" },
+    low: { bg: "var(--color-info-bg)", fg: "var(--color-info-text)" },
   };
-  const c = colors[level] ?? { bg: "#f1f5f9", fg: "#475569" };
+  const c = colors[level] ?? { bg: "var(--bg-app)", fg: "var(--text-secondary)" };
   return (
-    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg }}>
+    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg, border: `1px solid ${c.fg}40` }}>
       {level}
     </span>
   );
@@ -1568,18 +1571,18 @@ function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, on
   return (
     <>
       {commands.length === 0 ? (
-        <p style={{ color: "#94a3b8", fontSize: 13 }}>No verification commands detected for this repository.</p>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>No verification commands detected for this repository.</p>
       ) : (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{commands.length} command(s) detected</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{commands.length} command(s) detected</span>
             <button
               onClick={onBatchRun}
               disabled={batchRunning || batchCommandCount === 0}
               title="Review and run all detected non-install checks"
               style={{
                 display: "flex", alignItems: "center", gap: 4, padding: "4px 10px",
-                background: "#eff6ff", color: "#1e40af", border: "1px solid #bfdbfe",
+                background: "var(--color-info-bg)", color: "var(--color-info-text)", border: "1px solid var(--color-info-border)",
                 borderRadius: 4,
                 cursor: batchRunning || batchCommandCount === 0 ? "not-allowed" : "pointer",
                 fontSize: 12,
@@ -1593,10 +1596,10 @@ function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, on
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
             {commands.map((cmd) => {
               return (
-              <div key={cmd.command} style={{ padding: 10, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div key={cmd.command} style={{ padding: 10, background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 12, fontFamily: "monospace" }}>{cmd.command}</div>
-                  <div style={{ fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 6 }}>
                     {cmd.name} - {cmd.category}
                     <RiskBadge level={cmd.riskLevel} />
                   </div>
@@ -1607,7 +1610,7 @@ function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, on
                   title={`Review and run ${cmd.command}`}
                   style={{
                     display: "flex", alignItems: "center", gap: 4, padding: "4px 10px",
-                    background: "#f0f9ff", color: "#0369a1", border: "1px solid #bae6fd",
+                    background: "var(--color-info-bg)", color: "var(--color-info-text)", border: "1px solid var(--color-info-border)",
                     borderRadius: 4,
                     cursor: runningCmd === cmd.command ? "not-allowed" : "pointer",
                     fontSize: 12,
@@ -1624,20 +1627,20 @@ function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, on
       )}
 
       {result && (
-        <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden", marginBottom: 16 }}>
-          <div style={{ padding: "8px 12px", background: result.success ? "#f0fdf4" : "#fef2f2", display: "flex", alignItems: "center", gap: 6 }}>
-            {result.success ? <CheckCircle2 size={14} color="#166534" /> : <XCircle size={14} color="#991b1b" />}
-            <span style={{ fontWeight: 600, fontSize: 13, color: result.success ? "#166534" : "#991b1b" }}>
+        <div style={{ border: "1px solid var(--border-color)", borderRadius: 6, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ padding: "8px 12px", background: result.success ? "var(--color-success-bg)" : "var(--color-danger-bg)", display: "flex", alignItems: "center", gap: 6 }}>
+            {result.success ? <CheckCircle2 size={14} color="var(--color-success-text)" /> : <XCircle size={14} color="var(--color-danger-text)" />}
+            <span style={{ fontWeight: 600, fontSize: 13, color: result.success ? "var(--color-success-text)" : "var(--color-danger-text)" }}>
               {result.success ? "Passed" : "Failed"} (exit {result.exitCode ?? "N/A"}, {result.durationMs}ms)
             </span>
           </div>
           {result.stdout && (
-            <pre style={{ margin: 0, padding: 8, background: "#1e293b", color: "#e2e8f0", fontSize: 11, maxHeight: 100, overflow: "auto" }}>
+            <pre style={{ margin: 0, padding: 8, background: "var(--bg-app)", color: "var(--text-primary)", fontSize: 11, maxHeight: 100, overflow: "auto" }}>
               {result.stdout.length > 500 ? result.stdout.slice(0, 500) + "..." : result.stdout}
             </pre>
           )}
           {result.stderr && (
-            <pre style={{ margin: 0, padding: 8, background: "#1e293b", color: "#fca5a5", fontSize: 11, maxHeight: 80, overflow: "auto", borderTop: "1px solid #334155" }}>
+            <pre style={{ margin: 0, padding: 8, background: "var(--bg-app)", color: "var(--color-danger-text)", fontSize: 11, maxHeight: 80, overflow: "auto", borderTop: "1px solid var(--border-color)" }}>
               {result.stderr.length > 500 ? result.stderr.slice(0, 500) + "..." : result.stderr}
             </pre>
           )}
@@ -1646,20 +1649,20 @@ function VerifyTab({ commands, runningCmd, result, onRun, runs, batchRunning, on
 
       {runs.length > 0 && (
         <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 6 }}>Previous Runs</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>Previous Runs</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {runs.map((run) => (
-              <div key={run.id} style={{ padding: 8, background: "#f8fafc", borderRadius: 4, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div key={run.id} style={{ padding: 8, background: "var(--bg-app)", borderRadius: 4, border: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  {run.success ? <CheckCircle2 size={12} color="#166534" /> : <XCircle size={12} color="#991b1b" />}
+                  {run.success ? <CheckCircle2 size={12} color="var(--color-success-text)" /> : <XCircle size={12} color="var(--color-danger-text)" />}
                   <span style={{ fontSize: 11, fontFamily: "monospace", fontWeight: 600 }}>{run.command}</span>
-                  <span style={{ fontSize: 10, color: "#94a3b8" }}>{run.category}</span>
+                  <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>{run.category}</span>
                   <RiskBadge level={run.riskLevel} />
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: "#94a3b8" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: "var(--text-secondary)" }}>
                   {run.exitCode != null && <span>exit {run.exitCode}</span>}
                   <span>{run.durationMs}ms</span>
-                  {run.timedOut && <span style={{ color: "#92400e" }}>timeout</span>}
+                  {run.timedOut && <span style={{ color: "var(--color-warning-text)" }}>timeout</span>}
                   <span>{new Date(run.createdAt).toLocaleString()}</span>
                 </div>
               </div>
@@ -1680,51 +1683,51 @@ function PatchesTab({ patches, onApply, onReject, onRollback }: {
   onRollback: (id: string) => void;
 }) {
   if (patches.length === 0) {
-    return <p style={{ color: "#94a3b8", fontSize: 13 }}>No AI-generated patches for this repository.</p>;
+    return <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>No AI-generated patches for this repository.</p>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {patches.map((p) => (
-        <div key={p.id} style={{ padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+        <div key={p.id} style={{ padding: 12, background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border-color)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <div>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>{p.description}</span>
+              <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text-primary)" }}>{p.description}</span>
               <PatchStatusBadge status={p.status} />
             </div>
           </div>
-          <pre style={{ margin: 0, padding: 8, background: "#1e293b", color: "#e2e8f0", borderRadius: 4, fontSize: 11, maxHeight: 100, overflow: "auto" }}>
+          <pre style={{ margin: 0, padding: 8, background: "var(--bg-input)", color: "var(--text-primary)", borderRadius: 4, fontSize: 11, maxHeight: 100, overflow: "auto" }}>
             {p.patchContent.length > 400 ? p.patchContent.slice(0, 400) + "..." : p.patchContent}
           </pre>
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
             {p.status === "proposed" && (
               <>
-                <button onClick={() => onApply(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "#dcfce7", color: "#166534", border: "1px solid #bbf7d0", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
+                <button onClick={() => onApply(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "var(--color-success-bg)", color: "var(--color-success-text)", border: "1px solid var(--color-success-border)", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
                   <Check size={12} /> Apply
                 </button>
-                <button onClick={() => onReject(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "#fef2f2", color: "#991b1b", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
+                <button onClick={() => onReject(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "var(--color-danger-bg)", color: "var(--color-danger-text)", border: "1px solid var(--color-danger-border)", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
                   <X size={12} /> Reject
                 </button>
               </>
             )}
             {p.status === "applied" && (
-              <button onClick={() => onRollback(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
+              <button onClick={() => onRollback(p.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "var(--color-warning-bg)", color: "var(--color-warning-text)", border: "1px solid var(--color-warning-border)", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
                 <RotateCcw size={12} /> Rollback
               </button>
             )}
           </div>
           {p.appliedAt && (
-            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>
               Applied: {new Date(p.appliedAt).toLocaleString()}
             </div>
           )}
           {p.status === "applied" && p.verificationResult && (
-            <div style={{ marginTop: 8, padding: 8, background: "#f0fdf4", borderRadius: 4, border: "1px solid #bbf7d0" }}>
+            <div style={{ marginTop: 8, padding: 8, background: "var(--color-success-bg)", borderRadius: 4, border: "1px solid var(--color-success-border)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
-                <CheckCircle2 size={12} color="#166534" />
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#166534" }}>Post-apply Verification</span>
+                <CheckCircle2 size={12} color="var(--color-success-text)" />
+                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--color-success-text)" }}>Post-apply Verification</span>
               </div>
-              <pre style={{ margin: 0, fontSize: 10, color: "#334155", whiteSpace: "pre-wrap" }}>
+              <pre style={{ margin: 0, fontSize: 10, color: "var(--text-primary)", whiteSpace: "pre-wrap" }}>
                 {p.verificationResult}
               </pre>
             </div>
@@ -1743,7 +1746,7 @@ function SortableHeader({ label, sortKey: key, currentKey, dir, onSort }: {
   const active = currentKey === key;
   return (
     <th
-      style={{ textAlign: "left", padding: "10px 12px", color: active ? "#3b82f6" : "#64748b", fontWeight: 600, cursor: "pointer", userSelect: "none" }}
+      style={{ textAlign: "left", padding: "10px 12px", color: active ? "var(--color-primary)" : "var(--text-secondary)", fontWeight: 600, cursor: "pointer", userSelect: "none" }}
       onClick={() => onSort(key)}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 2 }}>

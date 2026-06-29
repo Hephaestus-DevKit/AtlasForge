@@ -41,25 +41,25 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             gap: 16,
           }}
         >
-          <AlertTriangle size={48} color="#ef4444" />
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: "#1e293b" }}>
+          <AlertTriangle size={48} color="var(--color-danger)" />
+          <h2 style={{ fontSize: 18, fontWeight: 600, color: "var(--text-primary)" }}>
             Something went wrong
           </h2>
-          <p style={{ color: "#64748b", fontSize: 14, maxWidth: 420, textAlign: "center" }}>
+          <p style={{ color: "var(--text-secondary)", fontSize: 14, maxWidth: 420, textAlign: "center" }}>
             An unexpected error occurred while rendering this page. The error has been logged to the
             developer console.
           </p>
           {this.state.error && (
             <pre
               style={{
-                background: "#f8fafc",
+                background: "var(--bg-input)",
                 padding: 12,
                 borderRadius: 6,
                 fontSize: 12,
-                color: "#991b1b",
+                color: "var(--color-danger-text)",
                 maxWidth: 600,
                 overflow: "auto",
-                border: "1px solid #e2e8f0",
+                border: "1px solid var(--border-color)",
               }}
             >
               {this.state.error.message}
@@ -69,7 +69,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             onClick={() => window.location.reload()}
             style={{
               padding: "10px 24px",
-              background: "#3b82f6",
+              background: "var(--color-primary)",
               color: "#fff",
               border: "none",
               borderRadius: 6,
@@ -80,6 +80,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           >
             Reload Page
           </button>
+
         </div>
       );
     }
