@@ -196,7 +196,7 @@ export function Knowledge() {
                       <span className="badge badge-neutral" style={{ fontSize: 10 }}>Score: {r.rank.toFixed(3)}</span>
                     </div>
                   </div>
-                  <pre style={{ margin: 0, padding: 12, background: "var(--bg-input)", border: "1px solid var(--border-color)", color: "#93c5fd", borderRadius: "var(--radius-sm)", fontSize: 12, fontFamily: "var(--font-mono)", overflow: "auto", maxHeight: 150, whiteSpace: "pre-wrap" }}>
+                  <pre style={{ margin: 0, padding: 12, background: "var(--bg-input)", border: "1px solid var(--border-color)", color: "var(--text-primary)", borderRadius: "var(--radius-sm)", fontSize: 12, fontFamily: "var(--font-mono)", overflow: "auto", maxHeight: 150, whiteSpace: "pre-wrap" }}>
                     {r.content.length > 500 ? r.content.slice(0, 500) + "..." : r.content}
                   </pre>
                 </div>
