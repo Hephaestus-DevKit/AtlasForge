@@ -561,16 +561,15 @@ export function Repositories() {
         {toasts.map((t) => (
           <div
             key={t.id}
+            className={`badge ${t.type === "success" ? "badge-success" : t.type === "error" ? "badge-danger" : "badge-info"}`}
             style={{
               padding: "10px 16px",
-              borderRadius: 6,
-              background: t.type === "success" ? "#dcfce7" : t.type === "error" ? "#fef2f2" : "#dbeafe",
-              color: t.type === "success" ? "#166534" : t.type === "error" ? "#991b1b" : "#1e40af",
-              border: `1px solid ${t.type === "success" ? "#bbf7d0" : t.type === "error" ? "#fca5a5" : "#93c5fd"}`,
+              borderRadius: "var(--radius-sm)",
               fontSize: 13,
               fontWeight: 500,
               maxWidth: 360,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+              boxShadow: "var(--shadow-md)",
+              display: "block",
             }}
           >
             {t.message}
@@ -582,20 +581,15 @@ export function Repositories() {
         <button
           onClick={handleRefreshProfiles}
           disabled={refreshing}
-          style={{
-            display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
-            background: refreshing ? "#94a3b8" : "#3b82f6", color: "#fff",
-            border: "none", borderRadius: 6, cursor: refreshing ? "not-allowed" : "pointer",
-            fontSize: 14, fontWeight: 600,
-          }}
+          className="btn btn-primary"
         >
-          <RefreshCw size={16} />
+          <RefreshCw size={16} className={refreshing ? "spin-slow" : ""} />
           {refreshing ? "Refreshing..." : "Refresh Profiles"}
         </button>
       </div>
 
       {error && (
-        <div style={{ padding: 12, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, marginBottom: 16, color: "#991b1b" }}>
+        <div className="badge badge-danger" style={{ display: "block", padding: 12, borderRadius: "var(--radius-sm)", marginBottom: 16, fontSize: 13, width: "100%" }}>
           {error}
         </div>
       )}
@@ -729,7 +723,7 @@ export function Repositories() {
               {/* Summary Header */}
               <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-color)" }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
-                  <Code2 size={18} color="#3b82f6" />
+                  <Code2 size={18} color="var(--color-primary)" />
                   {repoName(selectedRepo.worktreePath)}
                 </h3>
                 <p style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: "monospace", marginBottom: 6 }}>
@@ -1235,7 +1229,7 @@ function FixesTab({ fixPlans, aiProviders, selectedProviderId, onSelectProvider,
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
           <Wand2 size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
           AI Fix Assistant
         </h3>
@@ -1762,7 +1756,7 @@ function ProfileSection({ icon: Icon, title, color, children }: { icon: any; tit
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
         <Icon size={14} color={color} />
-        <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{title}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{title}</span>
       </div>
       <div style={{ paddingLeft: 20 }}>{children}</div>
     </div>
@@ -1779,45 +1773,48 @@ function Tag({ label, color }: { label: string; color: string }) {
 
 function MiniBadge({ label, active }: { label: string; active: boolean }) {
   return (
-    <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: active ? "#dcfce7" : "#f1f5f9", color: active ? "#166534" : "#94a3b8" }}>
+    <span className={`badge ${active ? "badge-success" : "badge-neutral"}`}>
       {active ? `✓ ${label}` : `✗ ${label}`}
     </span>
   );
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  const colors: Record<string, { bg: string; fg: string }> = {
-    critical: { bg: "#fef2f2", fg: "#991b1b" },
-    high: { bg: "#fef3c7", fg: "#92400e" },
-    medium: { bg: "#fef3c7", fg: "#92400e" },
-    low: { bg: "#dbeafe", fg: "#1e40af" },
-    info: { bg: "#f1f5f9", fg: "#475569" },
-  };
-  const c = colors[severity] ?? colors.info;
+  let badgeClass = "badge-neutral";
+  if (severity === "critical" || severity === "high") {
+    badgeClass = "badge-danger";
+  } else if (severity === "medium") {
+    badgeClass = "badge-warning";
+  } else if (severity === "low") {
+    badgeClass = "badge-info";
+  }
   return (
-    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg }}>
+    <span className={`badge ${badgeClass}`} style={{ textTransform: "lowercase" }}>
       {severity}
     </span>
   );
 }
 
 function PatchStatusBadge({ status }: { status: string }) {
-  const colors: Record<string, { bg: string; fg: string }> = {
-    proposed: { bg: "#dbeafe", fg: "#1e40af" },
-    applied: { bg: "#dcfce7", fg: "#166534" },
-    rejected: { bg: "#fef2f2", fg: "#991b1b" },
-    rolled_back: { bg: "#fef3c7", fg: "#92400e" },
-  };
-  const c = colors[status] ?? { bg: "#f1f5f9", fg: "#475569" };
+  let badgeClass = "badge-neutral";
+  if (status === "proposed") {
+    badgeClass = "badge-info";
+  } else if (status === "applied") {
+    badgeClass = "badge-success";
+  } else if (status === "rejected") {
+    badgeClass = "badge-danger";
+  } else if (status === "rolled_back") {
+    badgeClass = "badge-warning";
+  }
   return (
-    <span style={{ marginLeft: 8, padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg }}>
+    <span className={`badge ${badgeClass}`} style={{ marginLeft: 8, textTransform: "lowercase" }}>
       {status}
     </span>
   );
 }
 
 function EmptyText({ children }: { children: React.ReactNode }) {
-  return <p style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>{children}</p>;
+  return <p style={{ fontSize: 11, color: "var(--text-muted)", fontStyle: "italic" }}>{children}</p>;
 }
 
 function repoName(path: string) {
