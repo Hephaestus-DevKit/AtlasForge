@@ -47,6 +47,23 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
         );
     }
 
+    // Open a dedicated connection to avoid locking the main Mutex during the walk
+    let conn = match db.connection() {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                vec![],
+                vec![ScanErrorRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    root_id: root_id.clone(),
+                    path: Some(root.path.clone()),
+                    error_type: "db_error".into(),
+                    message: format!("Failed to open db connection: {}", e),
+                }],
+            );
+        }
+    };
+
     let mut repos = Vec::new();
     let mut errors = Vec::new();
     let mut visited = std::collections::HashSet::new();
@@ -107,7 +124,7 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
             }
             visited.insert(repo_path_str.clone());
 
-            match discover_git_repo(path, root, db) {
+            match discover_git_repo(path, root, &conn) {
                 Ok(repo) => repos.push(repo),
                 Err(e) => errors.push(ScanErrorRecord {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -126,7 +143,7 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
 fn discover_git_repo(
     repo_path: &Path,
     root: &WorkspaceRoot,
-    db: &Db,
+    conn: &rusqlite::Connection,
 ) -> Result<Repository, String> {
     let worktree_path = repo_path.to_string_lossy().to_string();
     let git_dir_path = repo_path.join(".git").to_string_lossy().to_string();
@@ -136,11 +153,10 @@ fn discover_git_repo(
         .unwrap_or_else(|| "unknown".into());
 
     // Create or find the project asset
-    let asset_id = ensure_project_asset(&worktree_path, root, &name, db)?;
+    let asset_id = ensure_project_asset(&worktree_path, root, &name, conn)?;
 
     // Check for existing repo by worktree_path to preserve stable IDs in the struct
     let existing_id = {
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare("SELECT id FROM repository WHERE worktree_path = ?1")
             .map_err(|e| e.to_string())?;
@@ -179,7 +195,7 @@ fn discover_git_repo(
     };
 
     // Upsert into database
-    upsert_repository(&repo, db)?;
+    upsert_repository(&repo, conn)?;
 
     Ok(repo)
 }
@@ -188,10 +204,8 @@ fn ensure_project_asset(
     path: &str,
     root: &WorkspaceRoot,
     name: &str,
-    db: &Db,
+    conn: &rusqlite::Connection,
 ) -> Result<String, String> {
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-
     // Check existing
     let mut stmt = conn
         .prepare("SELECT id FROM project_asset WHERE path = ?1")
@@ -220,9 +234,7 @@ fn ensure_project_asset(
     Ok(id)
 }
 
-fn upsert_repository(repo: &Repository, db: &Db) -> Result<(), String> {
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-
+fn upsert_repository(repo: &Repository, conn: &rusqlite::Connection) -> Result<(), String> {
     let ahead_behind_json = repo
         .ahead_behind
         .as_ref()
@@ -279,7 +291,6 @@ fn upsert_repository(repo: &Repository, db: &Db) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     }
-
     Ok(())
 }
 
@@ -393,9 +404,9 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    /// Create an in-memory database with migrations applied.
-    fn test_db() -> Db {
-        Db::new(&PathBuf::from(":memory:")).expect("Failed to create in-memory DB")
+    /// Create a file-backed database with migrations applied.
+    fn test_db(db_path: &Path) -> Db {
+        Db::new(&db_path.to_path_buf()).expect("Failed to create test DB")
     }
 
     /// Create a minimal WorkspaceRoot for testing.
@@ -470,8 +481,8 @@ mod tests {
 
     #[test]
     fn test_stable_repo_id_across_scans() {
-        let db = test_db();
         let tmp = create_temp_dir();
+        let db = test_db(&tmp.join("test_db.db"));
         let repo_dir = tmp.join("my-repo");
         fs::create_dir_all(&repo_dir).unwrap();
         init_git_repo(&repo_dir);
@@ -510,8 +521,8 @@ mod tests {
 
     #[test]
     fn test_duplicate_path_not_duplicated() {
-        let db = test_db();
         let tmp = create_temp_dir();
+        let db = test_db(&tmp.join("test_db.db"));
         let repo_dir = tmp.join("dup-repo");
         fs::create_dir_all(&repo_dir).unwrap();
         init_git_repo(&repo_dir);
@@ -539,8 +550,8 @@ mod tests {
 
     #[test]
     fn test_worktree_git_file_detection() {
-        let db = test_db();
         let tmp = create_temp_dir();
+        let db = test_db(&tmp.join("test_db.db"));
         let repo_dir = tmp.join("wt-repo");
         fs::create_dir_all(&repo_dir).unwrap();
 
@@ -571,8 +582,8 @@ mod tests {
 
     #[test]
     fn test_scan_error_persistence() {
-        let db = test_db();
         let tmp = create_temp_dir();
+        let db = test_db(&tmp.join("test_db.db"));
         let root = test_root(&tmp.to_string_lossy());
         insert_root(&db, &root);
 
@@ -600,8 +611,8 @@ mod tests {
 
     #[test]
     fn test_excluded_directories_skipped() {
-        let db = test_db();
         let tmp = create_temp_dir();
+        let db = test_db(&tmp.join("test_db.db"));
 
         // Create a repo inside node_modules — it should be skipped
         let nm_dir = tmp.join("node_modules").join("hidden-repo");

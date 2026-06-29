@@ -340,6 +340,7 @@ mod tests {
 
         Db {
             conn: Mutex::new(conn),
+            path: std::path::PathBuf::new(),
         }
     }
 

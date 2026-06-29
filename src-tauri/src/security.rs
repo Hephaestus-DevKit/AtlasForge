@@ -54,11 +54,10 @@ pub fn authorize_path<'a>(path: &Path, roots: &'a [WorkspaceRoot]) -> Option<&'a
         Err(_) => return None,
     };
     for root in roots {
-        let root_canonical = match Path::new(&root.path).canonicalize() {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        if path_is_within(&canonical, &root_canonical) {
+        // Since root.path is already canonicalized when saved to the database,
+        // we can directly convert it to a Path without performing redundant I/O.
+        let root_path = Path::new(&root.path);
+        if path_is_within(&canonical, root_path) {
             return Some(root);
         }
     }
@@ -161,6 +160,7 @@ mod tests {
     use std::fs;
 
     fn test_root(path: &Path, access_mode: &str) -> WorkspaceRoot {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         WorkspaceRoot {
             id: "test".into(),
             path: path.to_string_lossy().into_owned(),

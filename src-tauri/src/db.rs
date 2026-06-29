@@ -33,6 +33,7 @@ pub const MIGRATION_016_SQL: &str = include_str!("../migrations/016_security_wor
 
 pub struct Db {
     pub conn: Mutex<Connection>,
+    pub path: PathBuf,
 }
 
 impl Db {
@@ -106,7 +107,16 @@ impl Db {
 
         Ok(Self {
             conn: Mutex::new(conn),
+            path: db_path.clone(),
         })
+    }
+
+    /// Open a new connection to the database file.
+    /// This allows concurrent readers and writers in WAL mode without locking the main conn Mutex.
+    pub fn connection(&self) -> Result<Connection, rusqlite::Error> {
+        let conn = Connection::open(&self.path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        Ok(conn)
     }
 }
 

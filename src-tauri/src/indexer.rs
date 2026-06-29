@@ -17,8 +17,12 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
     let current_paths: HashSet<String> =
         files.iter().map(|(relative, _)| relative.clone()).collect();
 
+    // Use a dedicated connection to avoid locking the main Mutex
+    let mut conn = db.connection().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
     for (relative_path, abs_path) in &files {
-        match index_file(repo_id, relative_path, abs_path, db) {
+        match index_file(repo_id, relative_path, abs_path, &tx) {
             Ok((chunk_count, skipped)) => {
                 stats.documents += 1;
                 stats.chunks += chunk_count;
@@ -34,7 +38,9 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
         }
     }
 
-    remove_stale_documents(repo_id, &current_paths, db)?;
+    remove_stale_documents(repo_id, &current_paths, &tx)?;
+    tx.commit().map_err(|e| e.to_string())?;
+
     Ok(stats)
 }
 
@@ -404,7 +410,7 @@ fn index_file(
     repo_id: &str,
     relative_path: &str,
     abs_path: &str,
-    db: &Db,
+    conn: &rusqlite::Connection,
 ) -> Result<(usize, bool), String> {
     let content =
         std::fs::read_to_string(abs_path).map_err(|e| format!("Cannot read file: {}", e))?;
@@ -416,7 +422,6 @@ fn index_file(
     let mime_type = detect_mime_type(relative_path);
     let content_hash = simple_hash(&content);
 
-    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
     let existing = conn
         .query_row(
             "SELECT id, content_hash, index_version,
@@ -439,10 +444,9 @@ fn index_file(
             return Ok((*chunk_count as usize, true));
         }
     }
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // Upsert source document
-    let doc_id: String = tx
+    let doc_id: String = conn
         .query_row(
             "SELECT id FROM source_document WHERE repo_id = ?1 AND path = ?2",
             rusqlite::params![repo_id, relative_path],
@@ -455,7 +459,7 @@ fn index_file(
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
         });
 
-    tx.execute(
+    conn.execute(
         "INSERT INTO source_document
          (id, repo_id, path, mime_type, language, size_bytes, modified_at, indexed_at, content_hash, index_version)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'), ?8, ?9)
@@ -482,7 +486,7 @@ fn index_file(
     .map_err(|e| e.to_string())?;
 
     // Delete old chunks
-    tx.execute(
+    conn.execute(
         "DELETE FROM chunk WHERE document_id = ?1",
         rusqlite::params![doc_id],
     )
@@ -496,26 +500,23 @@ fn index_file(
         let chunk_id = uuid::Uuid::new_v4().to_string();
         let chunk_type = detect_chunk_type(relative_path);
 
-        tx.execute(
+        conn.execute(
             "INSERT INTO chunk (id, document_id, seq, content, heading, start_line, end_line, chunk_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![chunk_id, doc_id, seq as i64, chunk_text, heading, start_line, end_line, chunk_type],
         )
         .map_err(|e| e.to_string())?;
     }
 
-    tx.commit().map_err(|e| e.to_string())?;
     Ok((chunk_count, false))
 }
 
 fn remove_stale_documents(
     repo_id: &str,
     current_paths: &HashSet<String>,
-    db: &Db,
+    conn: &rusqlite::Connection,
 ) -> Result<(), String> {
-    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
     let stale_ids = {
-        let mut stmt = tx
+        let mut stmt = conn
             .prepare("SELECT id, path FROM source_document WHERE repo_id = ?1")
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -529,13 +530,13 @@ fn remove_stale_documents(
             .collect::<Vec<_>>()
     };
     for id in stale_ids {
-        tx.execute(
+        conn.execute(
             "DELETE FROM source_document WHERE id = ?1",
             rusqlite::params![id],
         )
         .map_err(|e| e.to_string())?;
     }
-    tx.commit().map_err(|e| e.to_string())
+    Ok(())
 }
 
 fn build_fts_query(query: &str) -> String {
@@ -845,7 +846,7 @@ mod tests {
     use std::fs;
 
     fn indexed_repo_db(repo_path: &Path) -> Db {
-        let db = Db::new(&std::path::PathBuf::from(":memory:")).unwrap();
+        let db = Db::new(&repo_path.join("test_db.db")).unwrap();
         let conn = db.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO workspace_root (id, path, label) VALUES ('root', ?1, 'Root')",
