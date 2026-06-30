@@ -109,7 +109,7 @@ export function Settings() {
   }
 
   function handleTypeChange(type: AiProvider["adapterType"]) {
-    let defaults = {
+    const defaults = {
       adapterType: type,
       baseUrl: "",
       defaultModel: "",
