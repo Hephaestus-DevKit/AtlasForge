@@ -7,11 +7,20 @@
   <img src="https://img.shields.io/badge/Backend-Rust-black?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
 </div>
 
+<div align="center">
+  <h3>
+    🌐 <a href="https://wangjiehu.github.io/AtlasForge/">点击在线体验 Web Demo</a>
+  </h3>
+</div>
+
 <br />
 
 **AtlasForge** 是一款**本地优先（Local-First）的个人 AI 软件工程协同平台与多仓库自动维护引擎**。
 
 它旨在成为开发者在本地机器上的“自动驾驶”工程运营系统，通过连接强大的本地或云端 AI 模型，帮助开发者自动进行代码审查、缺陷修复、健康度审计、测试验证以及变更沉淀。
+
+> [!NOTE]
+> **在线体验说明**：Web Demo 部署在 GitHub Pages 上，供您预览和体验 AtlasForge 完整的 UI 交互与设计。由于 Web 浏览器沙箱限制，在线版本无法调用本地的 Tauri 后端（如本地文件系统读写、Git 仓库扫描等）。如需完整体验全部功能，请下载并在本地运行。
 
 ---
 
@@ -29,7 +38,7 @@
 * **仓库深度画像**：自动识别项目技术栈（Rust, TypeScript, Python 等）、分析项目完整度（README、测试覆盖、CI 配置），自动生成健康审计报告。
 
 ### 2. ⚡ 高性能增量索引 (Knowledge base)
-* **批量事务提交**：摒弃传统单文件频繁提交数据库的 I/O 瓶颈，在单次 SQLite 事务中批量保存索引，带来 **10x~50x 的写入加速**。
+* **批量事务提交**：限制单文件频繁提交数据库的 I/O 瓶颈，在单次 SQLite 事务中批量保存索引，带来 **10x~50x 的写入加速**。
 * **智能增量比对**：通过极速的 mtime 内存哈希比对，自动跳过未修改的文件，只有变更文件才会触发 AI 敏感词过滤、分块（Chunking）和数据库写入。
 * **多线程并发切片**：并行对海量源码文件进行安全敏感词脱敏与 AST 语义分块。
 
@@ -81,7 +90,7 @@ npm run tauri -- build --target x86_64-pc-windows-msvc
 
 ## 📂 架构设计与文档
 
-关于 system 架构、数据库模型与 AI 智能体体系的详细设计，请参阅：
+关于系统架构、数据库模型与 AI 智能体体系的详细设计，请参阅：
 * 📑 [产品定义与目标](docs/00-product-definition.md)
 * 📑 [核心架构与技术决策](docs/01-research-and-decisions.md)
 * 📑 [数据模型与知识索引体系](docs/03-domain-model-and-indexing.md)
