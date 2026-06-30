@@ -258,7 +258,7 @@ export interface Finding {
 export interface AiProvider {
   id: string;
   name: string;
-  adapterType: "ollama" | "openai_compatible";
+  adapterType: "ollama" | "openai_compatible" | "deepseek" | "openai" | "anthropic";
   baseUrl: string;
   apiKeyRef: string | null;
   defaultModel: string;

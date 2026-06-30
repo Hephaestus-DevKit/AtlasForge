@@ -137,7 +137,8 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
 
     let repo_path = get_repo_worktree_path(&proposal.repo_id, db)?;
     ensure_repo_write_allowed(&proposal.repo_id, db)?;
-    let patch_path = validate_patch_paths(&proposal.patch_content, None)?;
+    let patch_content = clean_patch_content(&proposal.patch_content);
+    let patch_path = validate_patch_paths(&patch_content, None)?;
     if patch_path != proposal.file_path.replace('\\', "/") {
         return Err("Patch metadata does not match the patch target file".into());
     }
@@ -157,7 +158,7 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
         repo_path,
         base_head,
         status,
-        crate::permissions::hash_text(&proposal.patch_content)
+        crate::permissions::hash_text(&patch_content)
     ));
 
     let sandbox = std::env::temp_dir().join(format!("atlasforge-patch-{}", uuid::Uuid::new_v4()));
@@ -170,8 +171,8 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
 
     let isolated_result = (|| -> Result<Option<String>, String> {
         link_dependency_cache(&repo_path, &sandbox_path)?;
-        run_git_apply(&sandbox_path, &proposal.patch_content, &["--check"])?;
-        run_git_apply(&sandbox_path, &proposal.patch_content, &[])?;
+        run_git_apply(&sandbox_path, &patch_content, &["--check"])?;
+        run_git_apply(&sandbox_path, &patch_content, &[])?;
         let verification = run_post_apply_verification(&proposal.repo_id, &sandbox_path, db);
         if verification
             .as_deref()
@@ -210,9 +211,9 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
         );
     }
 
-    run_git_apply(&repo_path, &proposal.patch_content, &["--check"])
+    run_git_apply(&repo_path, &patch_content, &["--check"])
         .map_err(|error| format!("Patch no longer applies cleanly: {}", error))?;
-    run_git_apply(&repo_path, &proposal.patch_content, &[])
+    run_git_apply(&repo_path, &patch_content, &[])
         .map_err(|error| format!("Patch apply failed: {}", error))?;
     let applied_file_hash = crate::permissions::hash_text_file(&target_path)?;
     let now = chrono::Utc::now().to_rfc3339();
@@ -311,6 +312,8 @@ pub fn rollback_patch(proposal_id: &str, db: &Db) -> Result<(), String> {
         )
         .map_err(|e| format!("Cannot rollback: {}", e))?;
     drop(conn);
+
+    let patch_content = clean_patch_content(&patch_content);
 
     let repo_path = get_repo_worktree_path(&repo_id, db)?;
     ensure_repo_write_allowed(&repo_id, db)?;
@@ -551,6 +554,38 @@ fn diff_header_path(line: &str) -> Option<&str> {
     line.strip_prefix("--- ")
         .or_else(|| line.strip_prefix("+++ "))
         .and_then(|value| value.split_whitespace().next())
+}
+
+fn clean_patch_content(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut start_idx = None;
+    for (i, line) in lines.iter().enumerate() {
+        if line.starts_with("diff --git") || line.starts_with("--- ") || line.starts_with("+++ ") {
+            start_idx = Some(i);
+            break;
+        }
+    }
+
+    let cleaned_lines = if let Some(idx) = start_idx {
+        lines[idx..].to_vec()
+    } else {
+        lines
+    };
+
+    let mut final_lines = Vec::new();
+    for line in cleaned_lines {
+        let trimmed = line.trim();
+        if trimmed == "```" || trimmed.starts_with("```") {
+            break;
+        }
+        final_lines.push(line);
+    }
+
+    let mut joined = final_lines.join("\n");
+    if !joined.ends_with('\n') && !joined.is_empty() {
+        joined.push('\n');
+    }
+    joined
 }
 
 fn validate_patch_paths(
@@ -1232,7 +1267,7 @@ pub async fn propose_fix(
             return Err("AI returned an empty response. Cannot create a patch proposal.".into());
         }
 
-        let patch_content = response.content.trim().to_string();
+        let patch_content = clean_patch_content(&response.content);
         if !ai_provider::scan_for_secrets(&patch_content).is_empty() {
             return Err("AI patch contains potential secret material and was not stored".into());
         }

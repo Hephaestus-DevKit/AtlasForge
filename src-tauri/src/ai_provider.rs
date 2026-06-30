@@ -22,7 +22,7 @@ pub struct AiProvider {
 pub fn upsert_provider(provider: &AiProvider, db: &Db) -> Result<(), String> {
     if !matches!(
         provider.adapter_type.as_str(),
-        "ollama" | "openai_compatible"
+        "ollama" | "openai_compatible" | "deepseek" | "openai" | "anthropic"
     ) {
         return Err(format!(
             "Unsupported adapter type: {}",
@@ -384,9 +384,10 @@ pub async fn call_ai(
 
     match provider.adapter_type.as_str() {
         "ollama" => call_ollama(provider, system_prompt, model, prompt).await,
-        "openai_compatible" => {
+        "openai_compatible" | "deepseek" | "openai" => {
             call_openai_compatible(provider, system_prompt, model, prompt).await
         }
+        "anthropic" => call_anthropic(provider, system_prompt, model, prompt).await,
         _ => Err(format!(
             "Unsupported adapter type: {}",
             provider.adapter_type
@@ -411,6 +412,30 @@ pub struct ProviderProbe {
     pub message: String,
     pub latency_ms: u64,
     pub models: Vec<String>,
+}
+
+fn get_openai_url(base_url: &str, suffix: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{}/{}", base, suffix)
+    } else {
+        format!("{}/v1/{}", base, suffix)
+    }
+}
+
+fn get_anthropic_url(base_url: &str, suffix: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{}/{}", base, suffix)
+    } else if base.ends_with("/v1/messages") {
+        if suffix == "messages" {
+            base.to_string()
+        } else {
+            format!("{}/{}", base.trim_end_matches("/messages"), suffix)
+        }
+    } else {
+        format!("{}/v1/{}", base, suffix)
+    }
 }
 
 pub async fn probe_provider(provider: &AiProvider) -> ProviderProbe {
@@ -448,15 +473,13 @@ pub async fn probe_provider(provider: &AiProvider) -> ProviderProbe {
                     })
                     .unwrap_or_default())
             }
-            "openai_compatible" => {
-                let mut request = http_client()?.get(format!(
-                    "{}/models",
-                    provider.base_url.trim_end_matches('/')
-                ));
+            "openai_compatible" | "deepseek" | "openai" => {
+                let url = get_openai_url(&provider.base_url, "models");
+                let mut request = http_client()?.get(url);
                 if let Some(key_ref) = &provider.api_key_ref {
-                    let key = std::env::var(key_ref)
-                        .map_err(|_| format!("Environment variable '{}' is not set", key_ref))?;
-                    request = request.bearer_auth(key);
+                    if let Ok(key) = std::env::var(key_ref) {
+                        request = request.bearer_auth(key);
+                    }
                 }
                 let response = request
                     .send()
@@ -482,6 +505,20 @@ pub async fn probe_provider(provider: &AiProvider) -> ProviderProbe {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default())
+            }
+            "anthropic" => {
+                let response = http_client()?
+                    .get(format!("{}", provider.base_url.trim_end_matches('/')))
+                    .send()
+                    .await;
+                match response {
+                    Ok(_) => Ok(vec![
+                        "claude-3-5-sonnet-20241022".to_string(),
+                        "claude-3-5-haiku-20241022".to_string(),
+                        "claude-3-opus-20240229".to_string(),
+                    ]),
+                    Err(e) => Err(format!("Cannot reach Anthropic: {}", e)),
+                }
             }
             _ => Err(format!(
                 "Unsupported adapter type: {}",
@@ -613,11 +650,9 @@ async fn call_openai_compatible(
         }
     }
 
+    let url = get_openai_url(&provider.base_url, "chat/completions");
     let response = http_client()?
-        .post(format!(
-            "{}/v1/chat/completions",
-            provider.base_url.trim_end_matches('/')
-        ))
+        .post(url)
         .bearer_auth(api_key)
         .json(&payload)
         .send()
@@ -654,6 +689,96 @@ async fn call_openai_compatible(
             .unwrap_or(0) as usize,
         finish_reason: choice
             .get("finish_reason")
+            .and_then(|r| r.as_str())
+            .map(|s| s.to_string()),
+    })
+}
+
+async fn call_anthropic(
+    provider: &AiProvider,
+    system_prompt: Option<&str>,
+    model: &str,
+    prompt: &str,
+) -> Result<AiResponse, String> {
+    let api_key = match &provider.api_key_ref {
+        Some(key_ref) => std::env::var(key_ref).map_err(|_| {
+            format!(
+                "Environment variable '{}' is not set for this provider",
+                key_ref
+            )
+        })?,
+        None => return Err("No API key environment variable configured for Anthropic provider".into()),
+    };
+
+    let mut payload = serde_json::json!({
+        "model": model,
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    });
+
+    if let Some(system) = system_prompt {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("system".to_string(), serde_json::json!(system));
+        }
+    }
+
+    // Merge custom provider.config parameters
+    if let Some(config_obj) = provider.config.as_object() {
+        if let Some(payload_obj) = payload.as_object_mut() {
+            for (k, v) in config_obj {
+                if k != "model" && k != "messages" && k != "system" {
+                    payload_obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+
+    let url = get_anthropic_url(&provider.base_url, "messages");
+    let request = http_client()?
+        .post(url)
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .bearer_auth(&api_key); // Maximize compatibility with gateways (OneAPI/LiteLLM/OpenRouter)
+
+    let response = request
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to call Anthropic API: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("API call failed: {}", e))?
+        .json::<Value>()
+        .await
+        .map_err(|e| format!("Invalid API response: {}", e))?;
+
+    let content = response
+        .get("content")
+        .and_then(|c| c.get(0))
+        .and_then(|item| item.get("text"))
+        .and_then(|t| t.as_str())
+        .ok_or("No content text in response")?
+        .to_string();
+
+    let usage = response.get("usage");
+
+    Ok(AiResponse {
+        content,
+        model: model.to_string(),
+        tokens_in: usage
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0) as usize,
+        tokens_out: usage
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0) as usize,
+        finish_reason: response
+            .get("stop_reason")
             .and_then(|r| r.as_str())
             .map(|s| s.to_string()),
     })

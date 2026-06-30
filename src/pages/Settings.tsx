@@ -8,7 +8,7 @@ import {
   checkGhAuth,
 } from "../api/ipc";
 import type { AiProvider, GhAuthStatus, ProviderProbe } from "../types";
-import { Cpu, Github, Plus, Trash2, Wifi, WifiOff, RefreshCw, Activity } from "lucide-react";
+import { Cpu, Github, Plus, Trash2, Wifi, WifiOff, RefreshCw, Activity, Edit } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { ToastContainer, type ToastMessage } from "../components/Toast";
 
@@ -16,14 +16,37 @@ const EMPTY_PROVIDER: AiProvider = {
   id: "",
   name: "",
   adapterType: "openai_compatible",
-  baseUrl: "http://localhost:11434",
-  defaultModel: "",
-  apiKeyRef: null,
+  baseUrl: "https://api.openai.com/v1",
+  defaultModel: "gpt-4o",
+  apiKeyRef: "OPENAI_API_KEY",
   enabled: true,
   availableModels: [],
   isLocal: false,
   isDefault: false,
   config: {},
+};
+
+const PLACEHOLDERS: Record<string, { baseUrl: string; model: string; apiKeyRef: string }> = {
+  ollama: {
+    baseUrl: "http://localhost:11434",
+    model: "e.g., llama3, qwen2.5",
+    apiKeyRef: "Not required for local Ollama",
+  },
+  deepseek: {
+    baseUrl: "https://api.deepseek.com",
+    model: "e.g., deepseek-chat, deepseek-coder",
+    apiKeyRef: "DEEPSEEK_API_KEY",
+  },
+  openai_compatible: {
+    baseUrl: "https://api.openai.com/v1",
+    model: "e.g., gpt-4o, gpt-4o-mini",
+    apiKeyRef: "OPENAI_API_KEY",
+  },
+  anthropic: {
+    baseUrl: "https://api.anthropic.com",
+    model: "e.g., claude-3-5-sonnet-20241022",
+    apiKeyRef: "ANTHROPIC_API_KEY",
+  },
 };
 
 export function Settings() {
@@ -37,6 +60,7 @@ export function Settings() {
   const [providerProbes, setProviderProbes] = useState<Record<string, ProviderProbe>>({});
   const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [configText, setConfigText] = useState("{}");
   const toastCounter = useRef(0);
 
   function showToast(message: string, type: ToastMessage["type"] = "info") {
@@ -84,17 +108,58 @@ export function Settings() {
     }
   }
 
+  function handleTypeChange(type: AiProvider["adapterType"]) {
+    let defaults = {
+      adapterType: type,
+      baseUrl: "",
+      defaultModel: "",
+      apiKeyRef: null as string | null,
+    };
+    if (type === "ollama") {
+      defaults.baseUrl = "http://localhost:11434";
+      defaults.defaultModel = "llama3";
+      defaults.apiKeyRef = null;
+    } else if (type === "deepseek") {
+      defaults.baseUrl = "https://api.deepseek.com";
+      defaults.defaultModel = "deepseek-chat";
+      defaults.apiKeyRef = "DEEPSEEK_API_KEY";
+    } else if (type === "openai_compatible") {
+      defaults.baseUrl = "https://api.openai.com/v1";
+      defaults.defaultModel = "gpt-4o";
+      defaults.apiKeyRef = "OPENAI_API_KEY";
+    } else if (type === "anthropic") {
+      defaults.baseUrl = "https://api.anthropic.com";
+      defaults.defaultModel = "claude-3-5-sonnet-20241022";
+      defaults.apiKeyRef = "ANTHROPIC_API_KEY";
+    }
+    setForm({
+      ...form,
+      ...defaults,
+    });
+  }
+
   async function handleAddProvider() {
     try {
       setError(null);
+      let parsedConfig = {};
+      if (configText.trim()) {
+        try {
+          parsedConfig = JSON.parse(configText);
+        } catch (e) {
+          showToast("Invalid Custom Options JSON format", "error");
+          return;
+        }
+      }
       const provider = {
         ...form,
         id: form.id || crypto.randomUUID(),
         apiKeyRef: form.apiKeyRef?.trim() || null,
+        config: parsedConfig,
       };
       await upsertAiProvider(provider);
       setShowProviderForm(false);
       setForm(EMPTY_PROVIDER);
+      setConfigText("{}");
       await loadData();
     } catch (e: any) {
       setError(e?.toString() ?? "Failed to save provider");
@@ -130,6 +195,7 @@ export function Settings() {
       setProbingProviderId(null);
     }
   }
+  const currentPlaceholders = PLACEHOLDERS[form.adapterType] || PLACEHOLDERS.openai_compatible;
 
   return (
     <div>
@@ -141,7 +207,7 @@ export function Settings() {
         </div>
       )}
 
-      <div className="settings-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+      <div className="settings-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 20 }}>
         {/* AI Providers */}
         <div className="card" style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -192,15 +258,14 @@ export function Settings() {
                   <select
                     id="af-provider-type"
                     value={form.adapterType}
-                    onChange={(e) => setForm({
-                      ...form,
-                      adapterType: e.target.value as AiProvider["adapterType"],
-                    })}
+                    onChange={(e) => handleTypeChange(e.target.value as AiProvider["adapterType"])}
                     className="select-field"
                     style={{ width: "100%" }}
                   >
-                    <option value="ollama">Ollama</option>
-                    <option value="openai_compatible">OpenAI Compatible</option>
+                    <option value="ollama">Local (Ollama)</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="openai_compatible">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
                   </select>
                 </div>
               </div>
@@ -210,7 +275,7 @@ export function Settings() {
                   id="af-provider-url"
                   value={form.baseUrl}
                   onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-                  placeholder="http://localhost:11434"
+                  placeholder={currentPlaceholders.baseUrl}
                   className="input-field"
                 />
               </div>
@@ -220,18 +285,29 @@ export function Settings() {
                   id="af-provider-model"
                   value={form.defaultModel}
                   onChange={(e) => setForm({ ...form, defaultModel: e.target.value })}
-                  placeholder="e.g., llama3, gpt-4"
+                  placeholder={currentPlaceholders.model}
                   className="input-field"
                 />
               </div>
-              <div style={{ marginBottom: 16 }}>
+              <div style={{ marginBottom: 12 }}>
                 <label htmlFor="af-provider-keyref" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>API Key Env Var (optional)</label>
                 <input
                   id="af-provider-keyref"
                   value={form.apiKeyRef ?? ""}
                   onChange={(e) => setForm({ ...form, apiKeyRef: e.target.value || null })}
-                  placeholder="OPENAI_API_KEY"
+                  placeholder={currentPlaceholders.apiKeyRef}
                   className="input-field"
+                />
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label htmlFor="af-provider-config" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>Custom Options (JSON, optional)</label>
+                <textarea
+                  id="af-provider-config"
+                  value={configText}
+                  onChange={(e) => setConfigText(e.target.value)}
+                  placeholder='{ "temperature": 0.2 }'
+                  className="input-field"
+                  style={{ fontFamily: "var(--font-mono)", fontSize: 12, height: 70, resize: "vertical", width: "100%", background: "rgba(255, 255, 255, 0.03)", border: "1px solid var(--border-color)", color: "var(--text-primary)", padding: 8, borderRadius: "var(--radius-sm)" }}
                 />
               </div>
               <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -247,7 +323,7 @@ export function Settings() {
                 </label>
               </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                <button onClick={() => { setShowProviderForm(false); setForm(EMPTY_PROVIDER); }} className="btn btn-secondary">
+                <button onClick={() => { setShowProviderForm(false); setForm(EMPTY_PROVIDER); setConfigText("{}"); }} className="btn btn-secondary">
                   Cancel
                 </button>
                 <button onClick={handleAddProvider} className="btn btn-success">
@@ -276,6 +352,11 @@ export function Settings() {
                     <div style={{ fontSize: 12, color: "var(--text-secondary)", fontFamily: "var(--font-mono)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
                       {p.adapterType} · {p.defaultModel} · {p.baseUrl}
                     </div>
+                    {p.config && Object.keys(p.config).length > 0 && (
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: "var(--font-mono)", marginTop: 4, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                        Options: {JSON.stringify(p.config)}
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
                     {providerProbes[p.id] && (
@@ -292,6 +373,19 @@ export function Settings() {
                       style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "var(--color-primary-text)", outline: "none" }}
                     >
                       <Activity size={16} className={probingProviderId === p.id ? "spin-slow" : ""} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setForm(p);
+                        setConfigText(JSON.stringify(p.config || {}, null, 2));
+                        setShowProviderForm(true);
+                      }}
+                      title="Edit provider"
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "var(--color-primary-text)", opacity: 0.7, transition: "opacity var(--transition-fast)", outline: "none" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.7")}
+                    >
+                      <Edit size={16} />
                     </button>
                     <button
                       onClick={() => handleDeleteProvider(p.id)}

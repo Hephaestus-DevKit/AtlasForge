@@ -47,24 +47,9 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
         );
     }
 
-    // Open a dedicated connection to avoid locking the main Mutex during the walk
-    let conn = match db.connection() {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                vec![],
-                vec![ScanErrorRecord {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    root_id: root_id.clone(),
-                    path: Some(root.path.clone()),
-                    error_type: "db_error".into(),
-                    message: format!("Failed to open db connection: {}", e),
-                }],
-            );
-        }
-    };
 
-    let mut repos = Vec::new();
+
+    let mut candidate_paths = Vec::new();
     let mut errors = Vec::new();
     let mut visited = std::collections::HashSet::new();
 
@@ -123,17 +108,50 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
                 continue;
             }
             visited.insert(repo_path_str.clone());
+            candidate_paths.push(path.to_path_buf());
+        }
+    }
 
-            match discover_git_repo(path, root, &conn) {
-                Ok(repo) => repos.push(repo),
-                Err(e) => errors.push(ScanErrorRecord {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    root_id: root_id.clone(),
-                    path: Some(path.to_string_lossy().to_string()),
-                    error_type: "scan_error".into(),
-                    message: format!("Failed to scan {}: {}", path.display(), e),
-                }),
-            }
+    let mut repos = Vec::new();
+    let mut results = Vec::new();
+    let root_ref = root;
+    let db_ref = db;
+
+    std::thread::scope(|s| {
+        let mut threads = Vec::new();
+        for path in candidate_paths {
+            threads.push(s.spawn(move || {
+                let conn = match db_ref.connection() {
+                    Ok(c) => c,
+                    Err(e) => return Err((e.to_string(), path.clone())),
+                };
+                discover_git_repo(&path, root_ref, &conn)
+                    .map(|repo| (repo, path.clone()))
+                    .map_err(|err| (err, path))
+            }));
+        }
+        for t in threads {
+            results.push(t.join());
+        }
+    });
+
+    for res in results {
+        match res {
+            Ok(Ok((repo, _))) => repos.push(repo),
+            Ok(Err((e, path))) => errors.push(ScanErrorRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                root_id: root_id.clone(),
+                path: Some(path.to_string_lossy().to_string()),
+                error_type: "scan_error".into(),
+                message: e,
+            }),
+            Err(_) => errors.push(ScanErrorRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                root_id: root_id.clone(),
+                path: None,
+                error_type: "thread_panic".into(),
+                message: "Thread panicked during repository discovery".into(),
+            }),
         }
     }
 

@@ -5,11 +5,20 @@ use std::path::Path;
 const INDEX_VERSION: i64 = 1;
 type ChunkData = (Option<String>, Option<i32>, Option<i32>, String);
 
-/// Index a repository: create source documents and chunks for key files.
 pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexStats, String> {
     let root = Path::new(worktree_path);
     if !root.exists() || !root.is_dir() {
         return Err(format!("Repo path does not exist: {}", worktree_path));
+    }
+
+    #[allow(dead_code)]
+    struct ExistingDoc {
+        id: String,
+        content_hash: Option<String>,
+        modified_at: Option<String>,
+        size_bytes: i64,
+        index_version: i64,
+        chunk_count: i64,
     }
 
     let mut stats = IndexStats::default();
@@ -19,23 +28,177 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
 
     // Use a dedicated connection to avoid locking the main Mutex
     let mut conn = db.connection().map_err(|e| e.to_string())?;
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    for (relative_path, abs_path) in &files {
-        match index_file(repo_id, relative_path, abs_path, &tx) {
-            Ok((chunk_count, skipped)) => {
-                stats.documents += 1;
-                stats.chunks += chunk_count;
-                if skipped {
-                    stats.skipped_documents += 1;
-                } else {
-                    stats.indexed_documents += 1;
-                }
-            }
-            Err(e) => {
-                stats.errors.push(format!("{}: {}", relative_path, e));
+    // Pre-load existing document metadata to avoid N+1 queries
+    let existing_docs: std::collections::HashMap<String, ExistingDoc> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT path, content_hash, modified_at, size_bytes, index_version, id,
+                        (SELECT COUNT(*) FROM chunk WHERE document_id = source_document.id)
+                 FROM source_document WHERE repo_id = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![repo_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    ExistingDoc {
+                        content_hash: row.get(1)?,
+                        modified_at: row.get(2)?,
+                        size_bytes: row.get(3)?,
+                        index_version: row.get(4)?,
+                        id: row.get(5)?,
+                        chunk_count: row.get(6)?,
+                    },
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            if let Ok((path, doc)) = row {
+                map.insert(path, doc);
             }
         }
+        map
+    };
+
+    let mut files_to_process = Vec::new();
+
+    for (relative_path, abs_path) in files {
+        if let Ok(metadata) = std::fs::metadata(&abs_path) {
+            let size = metadata.len() as i64;
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|value| value.as_secs().to_string());
+
+            let mut skip = false;
+            if let Some(existing) = existing_docs.get(&relative_path) {
+                if existing.size_bytes == size
+                    && existing.modified_at == modified
+                    && existing.index_version == INDEX_VERSION
+                {
+                    stats.documents += 1;
+                    stats.chunks += existing.chunk_count as usize;
+                    stats.skipped_documents += 1;
+                    skip = true;
+                }
+            }
+
+            if !skip {
+                files_to_process.push((relative_path, abs_path, metadata));
+            }
+        }
+    }
+
+    let processed_files = std::sync::Mutex::new(Vec::new());
+    let process_errors = std::sync::Mutex::new(Vec::new());
+
+    // Process new or modified files in parallel using scoped threads
+    std::thread::scope(|s| {
+        let mut threads = Vec::new();
+        for (relative_path, abs_path, metadata) in files_to_process {
+            let processed_ref = &processed_files;
+            let errors_ref = &process_errors;
+            threads.push(s.spawn(move || {
+                match std::fs::read_to_string(&abs_path) {
+                    Ok(content) => {
+                        let content = crate::ai_provider::redact_secrets(&content);
+                        let language = detect_language_from_path(&relative_path);
+                        let mime_type = detect_mime_type(&relative_path);
+                        let content_hash = simple_hash(&content);
+                        let chunks = chunk_content(&content, &relative_path);
+                        processed_ref.lock().unwrap().push((
+                            relative_path,
+                            mime_type,
+                            language,
+                            metadata,
+                            content_hash,
+                            chunks,
+                        ));
+                    }
+                    Err(e) => {
+                        errors_ref
+                            .lock()
+                            .unwrap()
+                            .push(format!("{}: {}", relative_path, e));
+                    }
+                }
+            }));
+        }
+        for t in threads {
+            let _ = t.join();
+        }
+    });
+
+    for err in process_errors.into_inner().unwrap() {
+        stats.errors.push(err);
+    }
+
+    // Write new or modified files sequentially in a single transaction
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    for (relative_path, mime_type, language, metadata, content_hash, chunks) in
+        processed_files.into_inner().unwrap()
+    {
+        let chunk_count = chunks.len();
+
+        let doc_id: String = tx
+            .query_row(
+                "SELECT id FROM source_document WHERE repo_id = ?1 AND path = ?2",
+                rusqlite::params![repo_id, relative_path],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+
+        tx.execute(
+            "INSERT INTO source_document
+             (id, repo_id, path, mime_type, language, size_bytes, modified_at, indexed_at, content_hash, index_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'), ?8, ?9)
+             ON CONFLICT(repo_id, path) DO UPDATE SET
+                 mime_type = excluded.mime_type,
+                 language = excluded.language,
+                 size_bytes = excluded.size_bytes,
+                 modified_at = excluded.modified_at,
+                 indexed_at = excluded.indexed_at,
+                 content_hash = excluded.content_hash,
+                 index_version = excluded.index_version",
+            rusqlite::params![
+                doc_id,
+                repo_id,
+                relative_path,
+                mime_type,
+                language,
+                metadata.len() as i64,
+                metadata.modified().ok().and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok()).map(|value| value.as_secs().to_string()),
+                content_hash,
+                INDEX_VERSION,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Delete old chunks
+        tx.execute(
+            "DELETE FROM chunk WHERE document_id = ?1",
+            rusqlite::params![doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        for (seq, (heading, start_line, end_line, chunk_text)) in chunks.iter().enumerate() {
+            let chunk_id = uuid::Uuid::new_v4().to_string();
+            let chunk_type = detect_chunk_type(&relative_path);
+
+            tx.execute(
+                "INSERT INTO chunk (id, document_id, seq, content, heading, start_line, end_line, chunk_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![chunk_id, doc_id, seq as i64, chunk_text, heading, start_line, end_line, chunk_type],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        stats.documents += 1;
+        stats.chunks += chunk_count;
+        stats.indexed_documents += 1;
     }
 
     remove_stale_documents(repo_id, &current_paths, &tx)?;
@@ -406,109 +569,7 @@ fn collect_indexable_files(root: &Path) -> Vec<(String, String)> {
     result
 }
 
-fn index_file(
-    repo_id: &str,
-    relative_path: &str,
-    abs_path: &str,
-    conn: &rusqlite::Connection,
-) -> Result<(usize, bool), String> {
-    let content =
-        std::fs::read_to_string(abs_path).map_err(|e| format!("Cannot read file: {}", e))?;
-    let content = crate::ai_provider::redact_secrets(&content);
 
-    let metadata =
-        std::fs::metadata(abs_path).map_err(|e| format!("Cannot read file metadata: {}", e))?;
-    let language = detect_language_from_path(relative_path);
-    let mime_type = detect_mime_type(relative_path);
-    let content_hash = simple_hash(&content);
-
-    let existing = conn
-        .query_row(
-            "SELECT id, content_hash, index_version,
-                    (SELECT COUNT(*) FROM chunk WHERE document_id = source_document.id)
-             FROM source_document
-             WHERE repo_id = ?1 AND path = ?2",
-            rusqlite::params![repo_id, relative_path],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            },
-        )
-        .ok();
-    if let Some((_, Some(existing_hash), version, chunk_count)) = &existing {
-        if existing_hash == &content_hash && *version == INDEX_VERSION {
-            return Ok((*chunk_count as usize, true));
-        }
-    }
-
-    // Upsert source document
-    let doc_id: String = conn
-        .query_row(
-            "SELECT id FROM source_document WHERE repo_id = ?1 AND path = ?2",
-            rusqlite::params![repo_id, relative_path],
-            |row| row.get(0),
-        )
-        .unwrap_or_else(|_| {
-            existing
-                .as_ref()
-                .map(|value| value.0.clone())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-        });
-
-    conn.execute(
-        "INSERT INTO source_document
-         (id, repo_id, path, mime_type, language, size_bytes, modified_at, indexed_at, content_hash, index_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'), ?8, ?9)
-         ON CONFLICT(repo_id, path) DO UPDATE SET
-             mime_type = excluded.mime_type,
-             language = excluded.language,
-             size_bytes = excluded.size_bytes,
-             modified_at = excluded.modified_at,
-             indexed_at = excluded.indexed_at,
-             content_hash = excluded.content_hash,
-             index_version = excluded.index_version",
-        rusqlite::params![
-            doc_id,
-            repo_id,
-            relative_path,
-            mime_type,
-            language,
-            metadata.len() as i64,
-            metadata.modified().ok().and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok()).map(|value| value.as_secs().to_string()),
-            content_hash,
-            INDEX_VERSION,
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Delete old chunks
-    conn.execute(
-        "DELETE FROM chunk WHERE document_id = ?1",
-        rusqlite::params![doc_id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Chunk the content
-    let chunks = chunk_content(&content, relative_path);
-    let chunk_count = chunks.len();
-
-    for (seq, (heading, start_line, end_line, chunk_text)) in chunks.iter().enumerate() {
-        let chunk_id = uuid::Uuid::new_v4().to_string();
-        let chunk_type = detect_chunk_type(relative_path);
-
-        conn.execute(
-            "INSERT INTO chunk (id, document_id, seq, content, heading, start_line, end_line, chunk_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![chunk_id, doc_id, seq as i64, chunk_text, heading, start_line, end_line, chunk_type],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    Ok((chunk_count, false))
-}
 
 fn remove_stale_documents(
     repo_id: &str,

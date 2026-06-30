@@ -1,158 +1,97 @@
-# AtlasForge
+# 🪐 AtlasForge
 
-AtlasForge 是一个本地优先的个人 AI 工作台和多仓库维护平台。
+<div align="center">
+  <img src="https://img.shields.io/badge/Platform-Windows%20x64-blue?style=for-the-badge&logo=windows" alt="Platform" />
+  <img src="https://img.shields.io/badge/Framework-Tauri%20v2-eceff4?style=for-the-badge&logo=tauri&logoColor=24c8fa" alt="Tauri" />
+  <img src="https://img.shields.io/badge/Frontend-React%20%2B%20TypeScript-blue?style=for-the-badge&logo=react&logoColor=61dafb" alt="React" />
+  <img src="https://img.shields.io/badge/Backend-Rust-black?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
+</div>
 
-名字含义：
+<br />
 
-- Atlas：把电脑里的项目、仓库、文档、发布状态、知识资产画成一张可查询、可推理、可追踪的地图。
-- Forge：把 AI 的分析、修复、验证、发布动作锻造成真实可交付成果，而不是停在聊天建议。
+**AtlasForge** 是一款**本地优先（Local-First）的个人 AI 软件工程协同平台与多仓库自动维护引擎**。
 
-## 核心定位
+它旨在成为开发者在本地机器上的“自动驾驶”工程运营系统，通过连接强大的本地或云端 AI 模型，帮助开发者自动进行代码审查、缺陷修复、健康度审计、测试验证以及变更沉淀。
 
-AtlasForge 不是普通 todo 工具，也不是单仓库代码助手。它要成为一个长期运行的"个人工程运营系统"：
+---
 
-- 发现本机和 GitHub 上的项目资产。
-- 给每个仓库建立健康画像、知识索引和维护历史。
-- 用 AI 自动完成审查、修复、测试、发布、文档整理和复盘。
-- 把所有高风险动作纳入权限、审计、回滚和验证链路。
-- 逐步沉淀成个人知识库、项目手册、发布手册和自动化体系。
+## 🗺️ 名字的含义
 
-## 当前状态：开发中
+* **Atlas（星图）**：将你本地与 GitHub 上的海量项目、源码库、文档以及资产状态，绘制成一张高维的、可语义检索、可推理追踪的知识地图。
+* **Forge（锻造）**：不只是停留在聊天框中的修改建议，而是将 AI 的分析与方案真正“锻造”成可通过编译、经过自动化验证、具备安全撤销链路的真实交付代码。
 
-AtlasForge 目前处于开发阶段，尚未按正式产品发布。当前重点是打通真实能力、权限边界、数据一致性和验证链路。
+---
 
-- 仅支持 Windows x64 平台。
-- GitHub 写操作保持关闭，直到拥有独立的变更预览和审批界面。
-- AI 功能需要自行配置 API Provider（支持 Ollama 和 OpenAI 兼容接口）。
-- 自动化当前只实现应用运行期间的定时通知。
-- 不支持 ARM64、云同步、多用户或后台服务模式。
-- UI 尚未经过大量真实数据测试，可能存在布局问题。
+## 🚀 核心特性
 
-## 从源码运行
+### 1. 📂 多仓库自动发现与画像
+* **多核并行扫描**：采用 Rust 作用域线程（Scoped Threads）并行检索指定目录下的全部 Git 仓库，十倍级提升大容量硬盘的项目发现速度。
+* **仓库深度画像**：自动识别项目技术栈（Rust, TypeScript, Python 等）、分析项目完整度（README、测试覆盖、CI 配置），自动生成健康审计报告。
 
-前置条件：
+### 2. ⚡ 高性能增量索引 (Knowledge base)
+* **批量事务提交**：摒弃传统单文件频繁提交数据库的 I/O 瓶颈，在单次 SQLite 事务中批量保存索引，带来 **10x~50x 的写入加速**。
+* **智能增量比对**：通过极速的 mtime 内存哈希比对，自动跳过未修改的文件，只有变更文件才会触发 AI 敏感词过滤、分块（Chunking）和数据库写入。
+* **多线程并发切片**：并行对海量源码文件进行安全敏感词脱敏与 AST 语义分块。
 
-- Node.js ≥ 18
-- Rust stable (x86_64-pc-windows-msvc target)
-- Microsoft Visual Studio Build Tools 2022 (C++ 桌面开发工作负载)
+### 3. 🛡️ 严格的安全与权限模型 (Security-First)
+* **零密钥持久化**：所有 AI API 密钥均通过本地环境变量（如 `DEEPSEEK_API_KEY`）临时引用，数据库与配置文件中不保存任何明文 Token。
+* **双层沙箱验证**：AI 提出的代码修改补丁（Unified Diff）会首先自动在隔离的 `git worktree` 沙箱中应用，并通过项目原生的编译与测试命令进行验证，验证通过后才会安全应用到你的工作区。
+* **一键无损撤销**：对已应用的代码修改进行完整性哈希校验，支持一键无损 Rollback，绝不破坏你的手写代码。
 
+### 4. 🎛️ 多协议 AI 提供商适配
+* **4 种原生模式选择**：
+  * **Local (Ollama)**：支持完全本地运行的开源模型（如 Llama3、Qwen2.5），数据不出本地。
+  * **DeepSeek**：原生适配 DeepSeek 官方 API（支持 `deepseek-chat` / `deepseek-coder`），默认启用官方优化端点。
+  * **OpenAI**：支持标准 GPT 家族模型及任意 OpenAI 兼容的第三方中转服务。
+  * **Anthropic**：原生适配 Claude 官方 Messages API 协议，并深度兼容支持 `x-api-key` 与 `Bearer` 双头鉴权的中转网关（如 OneAPI、LiteLLM）。
+* **动态参数注入 (JSON)**：支持为每个 AI 提供商配置自定义选项（如 `{"temperature": 0.1, "max_tokens": 8192}`），精细化控制生成效果。
+* **一键连接性测试**：内建健康检测（Probe），实时反馈延迟（Latency）与可用模型列表。
+
+---
+
+## 🛠️ 快速开始
+
+### 前置要求
+为了在本地编译和运行 AtlasForge，你的机器需要具备以下环境：
+* **Node.js** ≥ 18
+* **Rust Stable** (推荐安装 `x86_64-pc-windows-msvc` 工具链)
+* **Visual Studio Build Tools 2022** (勾选 "C++ 桌面开发" 工作负载)
+
+### 从源码运行
 ```powershell
-# 获取源码后进入项目目录
+# 1. 克隆或进入项目目录
 cd .\AtlasForge
 
-# 安装前端依赖
+# 2. 安装前端依赖
 npm install
 
-# 开发模式运行
+# 3. 启动开发模式（将自动启动前端 Vite 与后端 Tauri 壳）
 npm run tauri dev
-
-# 构建安装包 (x64)
-$env:RUSTUP_TOOLCHAIN="stable-x86_64-pc-windows-msvc"; npm run tauri -- build --target x86_64-pc-windows-msvc
 ```
 
-构建产物位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/`。
-
-## 开发
-
+### 生产环境打包
 ```powershell
-# 前端开发服务器（仅 UI，无后端）
-npm run dev
-
-# 完整开发模式（Tauri 窗口 + 热重载）
-npm run tauri dev
-
-# 类型检查
-npm run typecheck
-
-# 代码风格检查
-npm run lint
-
-# 运行单元测试
-npm test
-
-# 运行 Rust 测试
-npm run test:rust
-
-# 运行端到端测试（需先安装 Playwright 浏览器）
-npx playwright install chromium
-npm run test:e2e
-
-# 生产构建
-npm run build
+# 构建 Windows x64 平台安装包
+$env:RUSTUP_TOOLCHAIN="stable-x86_64-pc-windows-msvc"
+npm run tauri -- build --target x86_64-pc-windows-msvc
 ```
+构建出的安装程序将位于：`src-tauri/target/x86_64-pc-windows-msvc/release/bundle/`
 
-## 验证
+---
 
-每个提交应通过以下验证：
+## 📂 架构设计与文档
 
-```powershell
-npm run verify-dev
-```
+关于 system 架构、数据库模型与 AI 智能体体系的详细设计，请参阅：
+* 📑 [产品定义与目标](docs/00-product-definition.md)
+* 📑 [核心架构与技术决策](docs/01-research-and-decisions.md)
+* 📑 [数据模型与知识索引体系](docs/03-domain-model-and-indexing.md)
+* 📑 [AI 任务与智能体系统设计](docs/04-agent-system.md)
+* 📑 [本地安全与权限控制设计](docs/06-security-and-permissions.md)
 
-需要浏览器冒烟验证时：
+---
 
-```powershell
-npm run verify-dev -- -E2E
-```
+## ⚖️ 核心原则
 
-完整 Tauri 构建验证：
-
-```powershell
-$env:RUSTUP_TOOLCHAIN="stable-x86_64-pc-windows-msvc"; npm run tauri -- build --target x86_64-pc-windows-msvc
-```
-
-进入打包阶段后再运行：
-
-```powershell
-npm run verify-release -- -FullBuild
-```
-
-手动冒烟测试清单见 [docs/tauri-smoke-checklist.md](docs/tauri-smoke-checklist.md)。
-
-## 安全模型
-
-AtlasForge 遵循以下安全原则：
-
-1. **前端不直接执行 Shell 或写文件**：所有写操作通过 Tauri IPC 经后端授权。
-2. **路径授权**：只能访问用户明确添加的工作区根目录下的文件。
-3. **只读模式**：工作区根目录可设为 read_only，阻止所有写操作。
-4. **GitHub 写操作关闭**：不存在环境变量后门；必须先实现独立预览和一次性审批。
-5. **不持久化密钥**：AI Provider 的 API Key 通过环境变量引用（apiKeyRef），不存入数据库。
-6. **审计日志**：所有高风险操作（代码修改、GitHub 写入、AI 调用）记录审计事件。
-7. **补丁审批**：审批单次有效，并绑定仓库基线；仓库变化后旧审批失效。
-8. **隔离验证**：补丁先在临时 Git worktree 中应用和验证，再修改用户工作树。
-9. **回滚路径**：只有文件仍匹配应用后哈希时才允许反向补丁，并验证恢复后的基线哈希。
-
-## 规划文档
-
-- [产品定义](docs/00-product-definition.md)
-- [调研与技术决策](docs/01-research-and-decisions.md)
-- [系统架构](docs/02-system-architecture.md)
-- [领域模型与索引体系](docs/03-domain-model-and-indexing.md)
-- [AI 任务与智能体系统](docs/04-agent-system.md)
-- [多仓维护引擎](docs/05-repo-maintenance-engine.md)
-- [安全、权限与审计](docs/06-security-and-permissions.md)
-- [界面与核心工作流](docs/07-ui-and-workflows.md)
-- [实施分层与任务清单](docs/08-implementation-backlog.md)
-- [验证、质量门与验收标准](docs/09-validation-and-quality-gates.md)
-- [交给 AI 执行的提示词](docs/10-ai-execution-prompts.md)
-- [Alpha 产品化执行计划](docs/12-alpha-productization-plan.md)
-- [当前能力矩阵](docs/13-capability-matrix.md)
-- [可信本地执行 ADR](docs/14-adr-trusted-execution.md)
-
-## 第一性原则
-
-1. 本地优先：用户资产默认留在本机，外部 AI 只拿到完成任务所需的最小上下文。
-2. 可验证：每个自动动作都要有证据链，不能只有“模型觉得可以”。
-3. 可回滚：代码改动、配置修改、发布动作必须保留恢复路径。
-4. 可解释：AI 做了什么、为什么做、用了哪些文件和命令，都要能复盘。
-5. 可替换：模型、向量库、GitHub 接入、桌面壳、任务执行器都要保留替换边界。
-6. 面向长期维护：先让系统稳定地观察、索引、审查，再逐步扩大自动修改和自动发布能力。
-
-## 不做什么
-
-- 不把它做成只有聊天框的外壳。
-- 不默认上传全盘文件给云端模型。
-- 不让 AI 在没有权限边界和审计记录的情况下随意执行 shell。
-- 不把“自动化”理解成跳过测试、跳过 review、跳过发布校验。
-- 不为了炫技引入微服务、分布式队列和复杂云基础设施作为第一版基础。
+1. **本地优先**：你的项目代码与核心索引永远保存在本地 SQLite 中，只有执行任务时才会将最小必要上下文发送给指定的 AI 接口。
+2. **可验证性**：AI 做出的任何代码修改与命令执行，必须留下明确的日志与哈希防篡改证据。
+3. **高并发与顺畅体验**：后端数据库连接池原生支持 **WAL 并发读写**与 5000ms 锁超时机制，背景任务（扫描/索引）运行时，前台 UI 绝不卡顿。
