@@ -22,6 +22,52 @@ pub struct AppState {
     pub jobs: Arc<job_engine::JobRuntime>,
 }
 
+const MAX_ROOT_GLOBS: usize = 128;
+const MAX_GLOB_LENGTH: usize = 512;
+
+fn validate_root_settings(input: &AddRootInput) -> Result<(), String> {
+    if !matches!(input.access_mode.as_str(), "read_only" | "read_write") {
+        return Err("Access mode must be 'read_only' or 'read_write'".into());
+    }
+
+    for (kind, patterns) in [
+        ("include", &input.include_globs),
+        ("exclude", &input.exclude_globs),
+    ] {
+        if patterns.len() > MAX_ROOT_GLOBS {
+            return Err(format!(
+                "Too many {} globs: maximum is {}",
+                kind, MAX_ROOT_GLOBS
+            ));
+        }
+        for pattern in patterns {
+            if pattern.trim().is_empty() {
+                return Err(format!("{} glob must not be empty", kind));
+            }
+            if pattern.len() > MAX_GLOB_LENGTH {
+                return Err(format!(
+                    "{} glob exceeds {} characters",
+                    kind, MAX_GLOB_LENGTH
+                ));
+            }
+            glob::Pattern::new(&pattern.replace('\\', "/"))
+                .map_err(|err| format!("Invalid {} glob '{}': {}", kind, pattern, err))?;
+        }
+    }
+    Ok(())
+}
+
+fn effective_exclude_globs(input: &AddRootInput) -> Vec<String> {
+    if input.exclude_globs.is_empty() {
+        security::DEFAULT_EXCLUDE_GLOBS
+            .iter()
+            .map(|pattern| pattern.to_string())
+            .collect()
+    } else {
+        input.exclude_globs.clone()
+    }
+}
+
 // --- Greeting (test IPC) ---
 
 #[tauri::command]
@@ -74,6 +120,7 @@ pub fn add_workspace_root(
     state: State<AppState>,
     input: AddRootInput,
 ) -> Result<WorkspaceRoot, String> {
+    validate_root_settings(&input)?;
     let path = std::path::Path::new(&input.path);
     if !path.exists() {
         return Err(format!("Path does not exist: {}", input.path));
@@ -109,16 +156,9 @@ pub fn add_workspace_root(
 
     let id = uuid::Uuid::new_v4().to_string();
     let include_globs = input.include_globs.clone();
-    let exclude_globs = if input.exclude_globs.is_empty() {
-        security::DEFAULT_EXCLUDE_GLOBS
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
-    } else {
-        input.exclude_globs.clone()
-    };
-    let include_globs_json = serde_json::to_string(&include_globs).unwrap_or_default();
-    let exclude_globs_json = serde_json::to_string(&exclude_globs).unwrap_or_default();
+    let exclude_globs = effective_exclude_globs(&input);
+    let include_globs_json = serde_json::to_string(&include_globs).map_err(|e| e.to_string())?;
+    let exclude_globs_json = serde_json::to_string(&exclude_globs).map_err(|e| e.to_string())?;
     let label = if input.label.is_empty() {
         path.file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -226,8 +266,11 @@ pub fn update_workspace_root(
     id: String,
     updates: AddRootInput,
 ) -> Result<WorkspaceRoot, String> {
-    let include_globs_json = serde_json::to_string(&updates.include_globs).unwrap_or_default();
-    let exclude_globs_json = serde_json::to_string(&updates.exclude_globs).unwrap_or_default();
+    validate_root_settings(&updates)?;
+    let exclude_globs = effective_exclude_globs(&updates);
+    let include_globs_json =
+        serde_json::to_string(&updates.include_globs).map_err(|e| e.to_string())?;
+    let exclude_globs_json = serde_json::to_string(&exclude_globs).map_err(|e| e.to_string())?;
 
     let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
@@ -377,7 +420,7 @@ pub fn list_project_assets(
     state: State<AppState>,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectAsset>, String> {
-    let limit = limit.unwrap_or(200);
+    let limit = limit.unwrap_or(200).clamp(1, 1_000);
     let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, root_id, path, kind, name, primary_language, last_observed_at FROM project_asset ORDER BY last_observed_at DESC LIMIT ?1")
@@ -466,7 +509,31 @@ pub async fn start_scan(
             continue;
         }
 
-        let (repos, scan_errors) = scan_root(root, &state.db);
+        let root_for_scan = root.clone();
+        let db_for_scan = state.db.clone();
+        let scan_result = tauri::async_runtime::spawn_blocking(move || {
+            let result = scan_root(&root_for_scan, &db_for_scan);
+            for repo in &result.0 {
+                if let Err(e) = profiler::profile_repo(&repo.id, &repo.worktree_path, &db_for_scan) {
+                    log::warn!("Failed to profile repo {}: {}", repo.worktree_path, e);
+                }
+            }
+            result
+        })
+        .await;
+        let (repos, scan_errors) = match scan_result {
+            Ok(result) => result,
+            Err(error) => {
+                let message = format!("Scan worker failed: {}", error);
+                state.jobs.finish(&job_id);
+                job_engine::fail_job(&job_id, &message, &state.db)?;
+                return Err(message);
+            }
+        };
+        if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            state.jobs.finish(&job_id);
+            return Err("Scan cancelled by user".into());
+        }
         roots_scanned += 1;
         repos_discovered += repos.len();
 
@@ -505,19 +572,13 @@ pub async fn start_scan(
             )?;
         }
 
-        for repo in &repos {
-            if let Err(e) = profiler::profile_repo(&repo.id, &repo.worktree_path, &state.db) {
-                log::warn!("Failed to profile repo {}: {}", repo.worktree_path, e);
-            }
-        }
-
         // Update last_scanned_at
         let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
             "UPDATE workspace_root SET last_scanned_at = datetime('now') WHERE id = ?1",
             rusqlite::params![root.id],
         )
-        .ok();
+        .map_err(|e| e.to_string())?;
         drop(conn);
 
         job_engine::update_progress(
@@ -570,6 +631,7 @@ pub async fn start_scan(
 
 #[tauri::command]
 pub fn list_jobs(state: State<AppState>, limit: i64) -> Result<Vec<Job>, String> {
+    let limit = limit.clamp(1, 500);
     let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, type, status, input, created_at, updated_at, completed_at, error_message, progress, progress_total, parent_job_id FROM job ORDER BY created_at DESC LIMIT ?1")
@@ -604,7 +666,7 @@ pub fn list_jobs_by_type_cmd(
     job_type: String,
     limit: Option<i64>,
 ) -> Result<Vec<Job>, String> {
-    job_engine::list_jobs_by_type(&job_type, limit.unwrap_or(50), &state.db)
+    job_engine::list_jobs_by_type(&job_type, limit.unwrap_or(50).clamp(1, 500), &state.db)
 }
 
 #[tauri::command]
@@ -927,6 +989,7 @@ pub async fn reindex_repo_cmd(
     )?;
     let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
     if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        state.jobs.finish(&job_id);
         return Err("Reindex cancelled by user".into());
     }
 
@@ -937,7 +1000,21 @@ pub async fn reindex_repo_cmd(
         &state.db,
     )?;
 
-    match indexer::index_repo(&repo_id, &worktree_path, &state.db) {
+    let repo_for_index = repo_id.clone();
+    let path_for_index = worktree_path.clone();
+    let db_for_index = state.db.clone();
+    let index_result = tauri::async_runtime::spawn_blocking(move || {
+        indexer::index_repo(&repo_for_index, &path_for_index, &db_for_index)
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Index worker failed: {}", e)));
+
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        state.jobs.finish(&job_id);
+        return Err("Reindex cancelled by user".into());
+    }
+
+    match index_result {
         Ok(stats) => {
             job_engine::complete_job(&job_id, &state.db)?;
             state.jobs.finish(&job_id);
@@ -997,6 +1074,7 @@ pub async fn audit_repo_cmd(
     )?;
     let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
     if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        state.jobs.finish(&job_id);
         return Err("Audit cancelled by user".into());
     }
 
@@ -1007,7 +1085,21 @@ pub async fn audit_repo_cmd(
         &state.db,
     )?;
 
-    match auditor::audit_repo(&repo_id, &worktree_path, None, &state.db) {
+    let repo_for_audit = repo_id.clone();
+    let path_for_audit = worktree_path.clone();
+    let db_for_audit = state.db.clone();
+    let audit_result = tauri::async_runtime::spawn_blocking(move || {
+        auditor::audit_repo(&repo_for_audit, &path_for_audit, None, &db_for_audit)
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Audit worker failed: {}", e)));
+
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        state.jobs.finish(&job_id);
+        return Err("Audit cancelled by user".into());
+    }
+
+    match audit_result {
         Ok(snapshot) => {
             job_engine::complete_job(&job_id, &state.db)?;
             state.jobs.finish(&job_id);
@@ -1356,7 +1448,7 @@ pub async fn sync_github_cmd(
         &serde_json::json!({"repoId": repo_id}).to_string(),
         &state.db,
     )?;
-    let _cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
 
     job_engine::append_job_event(
         &job_id,
@@ -1365,12 +1457,30 @@ pub async fn sync_github_cmd(
         &state.db,
     )?;
 
-    match (|| -> Result<(usize, usize, usize), String> {
-        let workflows = github::sync_workflow_runs(&integration, &state.db)?;
-        let prs = github::sync_prs(&integration, &state.db)?;
-        let releases = github::sync_releases(&integration, &state.db)?;
-        Ok((workflows.len(), prs.len(), releases.len()))
-    })() {
+    let integration_for_sync = integration.clone();
+    let db_for_sync = state.db.clone();
+    let cancellation_for_sync = cancellation.clone();
+    let sync_result = tauri::async_runtime::spawn_blocking(move || {
+        let workflows = github::sync_workflow_runs(&integration_for_sync, &db_for_sync)?;
+        if cancellation_for_sync.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("GitHub sync cancelled by user".into());
+        }
+        let prs = github::sync_prs(&integration_for_sync, &db_for_sync)?;
+        if cancellation_for_sync.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("GitHub sync cancelled by user".into());
+        }
+        let releases = github::sync_releases(&integration_for_sync, &db_for_sync)?;
+        Ok::<_, String>((workflows.len(), prs.len(), releases.len()))
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("GitHub sync worker failed: {}", e)));
+
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        state.jobs.finish(&job_id);
+        return Err("GitHub sync cancelled by user".into());
+    }
+
+    match sync_result {
         Ok((wf_count, pr_count, rel_count)) => {
             github::set_sync_errors(&integration.id, &[], &state.db)?;
             job_engine::complete_job(&job_id, &state.db)?;
@@ -1909,7 +2019,7 @@ pub fn list_verification_runs_cmd(
     repo_id: String,
     limit: Option<i64>,
 ) -> Result<Vec<verification::VerificationRun>, String> {
-    let limit = limit.unwrap_or(50);
+    let limit = limit.unwrap_or(50).clamp(1, 500);
     let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
         "SELECT id, repo_id, job_id, command, cwd, category, risk_level, success, exit_code, duration_ms, timed_out, stdout_tail, stderr_tail, created_at FROM verification_run WHERE repo_id = ?1 ORDER BY created_at DESC LIMIT ?2"
@@ -2002,7 +2112,11 @@ pub fn list_notifications_cmd(
     unread_only: Option<bool>,
     limit: Option<i64>,
 ) -> Result<Vec<automations::Notification>, String> {
-    automations::list_notifications(unread_only.unwrap_or(false), limit.unwrap_or(50), &state.db)
+    automations::list_notifications(
+        unread_only.unwrap_or(false),
+        limit.unwrap_or(50).clamp(1, 500),
+        &state.db,
+    )
 }
 
 #[tauri::command]
@@ -2068,4 +2182,35 @@ fn ensure_github_write_enabled() -> Result<(), String> {
         "GitHub write operations remain disabled until their dedicated preview and approval UI is implemented."
             .into(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn root_input(access_mode: &str, include_globs: Vec<String>) -> AddRootInput {
+        AddRootInput {
+            path: "C:/workspace".into(),
+            label: "Workspace".into(),
+            access_mode: access_mode.into(),
+            scan_enabled: true,
+            include_globs,
+            exclude_globs: vec!["node_modules".into()],
+        }
+    }
+
+    #[test]
+    fn workspace_settings_reject_invalid_modes_and_globs() {
+        assert!(validate_root_settings(&root_input("admin", vec![])).is_err());
+        assert!(validate_root_settings(&root_input(
+            "read_only",
+            vec!["[unterminated".into()]
+        ))
+        .is_err());
+        assert!(validate_root_settings(&root_input(
+            "read_write",
+            vec!["clients/**".into()]
+        ))
+        .is_ok());
+    }
 }

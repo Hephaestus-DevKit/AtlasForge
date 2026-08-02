@@ -1,8 +1,10 @@
 use crate::db::Db;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
+use std::sync::Mutex;
 
 const INDEX_VERSION: i64 = 1;
+const MAX_INDEX_WORKERS: usize = 8;
 type ChunkData = (Option<String>, Option<i32>, Option<i32>, String);
 
 pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexStats, String> {
@@ -92,43 +94,62 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
         }
     }
 
-    let processed_files = std::sync::Mutex::new(Vec::new());
-    let process_errors = std::sync::Mutex::new(Vec::new());
+    let processed_files = Mutex::new(Vec::new());
+    let process_errors = Mutex::new(Vec::new());
+    let worker_count = bounded_worker_count(files_to_process.len(), MAX_INDEX_WORKERS);
+    let queue = Mutex::new(VecDeque::from(files_to_process));
 
-    // Process new or modified files in parallel using scoped threads
+    // Process new or modified files with a bounded pool. Large repositories can
+    // contain tens of thousands of files, so spawning one OS thread per file is
+    // both slower and capable of exhausting system resources.
     std::thread::scope(|s| {
         let mut threads = Vec::new();
-        for (relative_path, abs_path, metadata) in files_to_process {
+        for _ in 0..worker_count {
             let processed_ref = &processed_files;
             let errors_ref = &process_errors;
+            let queue_ref = &queue;
             threads.push(s.spawn(move || {
-                match std::fs::read_to_string(&abs_path) {
-                    Ok(content) => {
-                        let content = crate::ai_provider::redact_secrets(&content);
-                        let language = detect_language_from_path(&relative_path);
-                        let mime_type = detect_mime_type(&relative_path);
-                        let content_hash = simple_hash(&content);
-                        let chunks = chunk_content(&content, &relative_path);
-                        processed_ref.lock().unwrap().push((
-                            relative_path,
-                            mime_type,
-                            language,
-                            metadata,
-                            content_hash,
-                            chunks,
-                        ));
-                    }
-                    Err(e) => {
-                        errors_ref
-                            .lock()
-                            .unwrap()
-                            .push(format!("{}: {}", relative_path, e));
+                loop {
+                    let task = queue_ref
+                        .lock()
+                        .expect("index queue poisoned")
+                        .pop_front();
+                    let Some((relative_path, abs_path, metadata)) = task else {
+                        break;
+                    };
+                    match std::fs::read_to_string(&abs_path) {
+                        Ok(content) => {
+                            let content = crate::ai_provider::redact_secrets(&content);
+                            let language = detect_language_from_path(&relative_path);
+                            let mime_type = detect_mime_type(&relative_path);
+                            let content_hash = simple_hash(&content);
+                            let chunks = chunk_content(&content, &relative_path);
+                            processed_ref.lock().unwrap().push((
+                                relative_path,
+                                mime_type,
+                                language,
+                                metadata,
+                                content_hash,
+                                chunks,
+                            ));
+                        }
+                        Err(e) => {
+                            errors_ref
+                                .lock()
+                                .unwrap()
+                                .push(format!("{}: {}", relative_path, e));
+                        }
                     }
                 }
             }));
         }
         for t in threads {
-            let _ = t.join();
+            if t.join().is_err() {
+                process_errors
+                    .lock()
+                    .unwrap()
+                    .push("Index worker panicked".into());
+            }
         }
     });
 
@@ -190,8 +211,8 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
             let chunk_type = detect_chunk_type(&relative_path);
 
             tx.execute(
-                "INSERT INTO chunk (id, document_id, seq, content, heading, start_line, end_line, chunk_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![chunk_id, doc_id, seq as i64, chunk_text, heading, start_line, end_line, chunk_type],
+                "INSERT INTO chunk (id, document_id, seq, content, heading, start_line, end_line, chunk_type, path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![chunk_id, doc_id, seq as i64, chunk_text, heading, start_line, end_line, chunk_type, relative_path],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -205,6 +226,17 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
     tx.commit().map_err(|e| e.to_string())?;
 
     Ok(stats)
+}
+
+fn bounded_worker_count(task_count: usize, maximum: usize) -> usize {
+    if task_count == 0 || maximum == 0 {
+        return 0;
+    }
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(maximum)
+        .min(task_count)
 }
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -936,6 +968,13 @@ mod tests {
         assert!(!should_index(Path::new(".env")));
         assert!(!should_index(Path::new(".env.local")));
         assert!(!should_index(Path::new("config/.env.production")));
+    }
+
+    #[test]
+    fn index_worker_count_is_bounded() {
+        assert_eq!(bounded_worker_count(0, MAX_INDEX_WORKERS), 0);
+        assert_eq!(bounded_worker_count(100, 3), 3);
+        assert!(bounded_worker_count(2, MAX_INDEX_WORKERS) <= 2);
     }
 
     #[test]

@@ -46,7 +46,7 @@ if ($LASTEXITCODE -ne 0) { throw "Rust tests failed" }
 
 $Step++
 Write-Host "[$Step/$TotalSteps] Running dependency audit..." -ForegroundColor Yellow
-npm audit --omit=optional
+npm audit --audit-level=moderate
 if ($LASTEXITCODE -ne 0) { throw "Dependency audit failed" }
 
 if ($E2E) {

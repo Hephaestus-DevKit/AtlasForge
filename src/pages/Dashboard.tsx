@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { listWorkspaceRoots, listRepositories, listJobs, startScan, listNotifications } from "../api/ipc";
 import type { WorkspaceRoot, Repository, Job, Notification } from "../types";
-import { FolderTree, GitBranch, ListTodo, AlertTriangle, Bell, Plus, Scan } from "lucide-react";
+import { FolderTree, GitBranch, ListTodo, AlertTriangle, Bell, Plus, Scan, type LucideIcon } from "lucide-react";
+import { navigateTo } from "../routing";
+import { errorMessage } from "../utils/errors";
 
 export function Dashboard() {
   const [roots, setRoots] = useState<WorkspaceRoot[]>([]);
@@ -11,7 +12,6 @@ export function Dashboard() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
-  const navigate = useNavigate();
 
   useEffect(() => {
     refresh();
@@ -30,8 +30,8 @@ export function Dashboard() {
       setRepos(rp);
       setJobs(j);
       setNotifications(n);
-    } catch (e: any) {
-      setError(e?.toString() ?? "Failed to load data");
+    } catch (e) {
+      setError(errorMessage(e, "Failed to load data"));
     }
   }
 
@@ -44,8 +44,8 @@ export function Dashboard() {
       if (result.errors.length > 0) {
         setError(`Scan completed with ${result.errors.length} error(s)`);
       }
-    } catch (e: any) {
-      setError(e?.toString() ?? "Scan failed");
+    } catch (e) {
+      setError(errorMessage(e, "Scan failed"));
     } finally {
       setScanning(false);
     }
@@ -85,7 +85,7 @@ export function Dashboard() {
             and managing your projects. Everything stays on your machine.
           </p>
           <button
-            onClick={() => navigate("/assets")}
+            onClick={() => navigateTo("/assets")}
             className="btn btn-primary"
             style={{ padding: "10px 24px", fontSize: 14 }}
           >
@@ -223,7 +223,7 @@ export function Dashboard() {
   );
 }
 
-function StatCard({ icon: Icon, label, value, color, glowColor }: { icon: any; label: string; value: number; color: string; glowColor: string }) {
+function StatCard({ icon: Icon, label, value, color, glowColor }: { icon: LucideIcon; label: string; value: number; color: string; glowColor: string }) {
   return (
     <div className="card card-interactive" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: 110 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

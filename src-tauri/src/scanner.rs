@@ -2,9 +2,13 @@ use crate::db::Db;
 use crate::models::*;
 use serde::{Deserialize, Serialize};
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 use walkdir::WalkDir;
+
+const MAX_SCAN_WORKERS: usize = 8;
 
 /// Record of an error that occurred during scanning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,11 +57,36 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
     let mut errors = Vec::new();
     let mut visited = std::collections::HashSet::new();
 
-    let compiled_excludes: Vec<glob::Pattern> = root
-        .exclude_globs
-        .iter()
-        .filter_map(|pattern| glob::Pattern::new(pattern).ok())
-        .collect();
+    let compiled_excludes = match compile_patterns(&root.exclude_globs) {
+        Ok(patterns) => patterns,
+        Err(message) => {
+            return (
+                vec![],
+                vec![ScanErrorRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    root_id: root_id.clone(),
+                    path: Some(root.path.clone()),
+                    error_type: "configuration_error".into(),
+                    message,
+                }],
+            )
+        }
+    };
+    let compiled_includes = match compile_patterns(&root.include_globs) {
+        Ok(patterns) => patterns,
+        Err(message) => {
+            return (
+                vec![],
+                vec![ScanErrorRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    root_id: root_id.clone(),
+                    path: Some(root.path.clone()),
+                    error_type: "configuration_error".into(),
+                    message,
+                }],
+            )
+        }
+    };
 
     for entry in WalkDir::new(root_path)
         .follow_links(false)
@@ -102,7 +131,10 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
         let path = entry.path();
 
         // Look for Git repositories. A .git child can be a directory or a worktree file.
-        if entry.file_type().is_dir() && path.join(".git").exists() {
+        if entry.file_type().is_dir()
+            && path.join(".git").exists()
+            && repo_path_matches_includes(path, root_path, &compiled_includes)
+        {
             let repo_path_str = path.to_string_lossy().to_string();
             if visited.contains(&repo_path_str) {
                 continue;
@@ -116,22 +148,36 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
     let mut results = Vec::new();
     let root_ref = root;
     let db_ref = db;
+    let worker_count = bounded_worker_count(candidate_paths.len(), MAX_SCAN_WORKERS);
+    let queue = Mutex::new(VecDeque::from(candidate_paths));
 
     std::thread::scope(|s| {
         let mut threads = Vec::new();
-        for path in candidate_paths {
+        for _ in 0..worker_count {
+            let queue_ref = &queue;
             threads.push(s.spawn(move || {
-                let conn = match db_ref.connection() {
-                    Ok(c) => c,
-                    Err(e) => return Err((e.to_string(), path.clone())),
-                };
-                discover_git_repo(&path, root_ref, &conn)
-                    .map(|repo| (repo, path.clone()))
-                    .map_err(|err| (err, path))
+                let mut worker_results = Vec::new();
+                loop {
+                    let Some(path) = queue_ref.lock().expect("scan queue poisoned").pop_front()
+                    else {
+                        break;
+                    };
+                    let result = match db_ref.connection() {
+                        Ok(conn) => discover_git_repo(&path, root_ref, &conn)
+                            .map(|repo| (repo, path.clone()))
+                            .map_err(|err| (err, path)),
+                        Err(err) => Err((err.to_string(), path)),
+                    };
+                    worker_results.push(result);
+                }
+                worker_results
             }));
         }
         for t in threads {
-            results.push(t.join());
+            match t.join() {
+                Ok(worker_results) => results.extend(worker_results.into_iter().map(Ok)),
+                Err(_) => results.push(Err(())),
+            }
         }
     });
 
@@ -156,6 +202,56 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
     }
 
     (repos, errors)
+}
+
+fn compile_patterns(patterns: &[String]) -> Result<Vec<glob::Pattern>, String> {
+    patterns
+        .iter()
+        .map(|pattern| {
+            let normalized = pattern.replace('\\', "/");
+            #[cfg(windows)]
+            let normalized = normalized.to_lowercase();
+            glob::Pattern::new(&normalized)
+                .map_err(|err| format!("Invalid glob pattern '{}': {}", pattern, err))
+        })
+        .collect()
+}
+
+fn repo_path_matches_includes(
+    repo_path: &Path,
+    root_path: &Path,
+    include_patterns: &[glob::Pattern],
+) -> bool {
+    if include_patterns.is_empty() {
+        return true;
+    }
+
+    let mut relative = repo_path
+        .strip_prefix(root_path)
+        .unwrap_or(repo_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    if relative.is_empty() {
+        relative.push('.');
+    }
+    #[cfg(windows)]
+    let relative = relative.to_lowercase();
+    let basename = relative.rsplit('/').next().unwrap_or(&relative);
+
+    include_patterns
+        .iter()
+        .any(|pattern| pattern.matches(&relative) || pattern.matches(basename))
+}
+
+fn bounded_worker_count(task_count: usize, maximum: usize) -> usize {
+    if task_count == 0 || maximum == 0 {
+        return 0;
+    }
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(maximum)
+        .min(task_count)
 }
 
 fn discover_git_repo(
@@ -465,6 +561,30 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("atlas_test_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("Failed to create temp dir");
         dir
+    }
+
+    #[test]
+    fn include_globs_match_relative_paths_and_repo_names() {
+        let root = Path::new("/workspace");
+        let nested = root.join("clients/acme-api");
+        let patterns = compile_patterns(&["clients/**".into()]).unwrap();
+        assert!(repo_path_matches_includes(&nested, root, &patterns));
+
+        let name_patterns = compile_patterns(&["acme-*".into()]).unwrap();
+        assert!(repo_path_matches_includes(&nested, root, &name_patterns));
+        assert!(!repo_path_matches_includes(
+            &root.join("internal/tools"),
+            root,
+            &name_patterns
+        ));
+    }
+
+    #[test]
+    fn invalid_globs_are_rejected_and_workers_are_bounded() {
+        assert!(compile_patterns(&["[unterminated".into()]).is_err());
+        assert_eq!(bounded_worker_count(0, MAX_SCAN_WORKERS), 0);
+        assert_eq!(bounded_worker_count(100, 3), 3);
+        assert!(bounded_worker_count(2, MAX_SCAN_WORKERS) <= 2);
     }
 
     /// Initialize a bare git repo in the given directory.

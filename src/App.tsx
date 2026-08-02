@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
 import { Layout } from "./components/Layout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Dashboard } from "./pages/Dashboard";
@@ -10,8 +9,27 @@ import { Knowledge } from "./pages/Knowledge";
 import { Automations } from "./pages/Automations";
 import { Settings } from "./pages/Settings";
 import { tickScheduler } from "./api/ipc";
+import { currentRoute, type AppRoute } from "./routing";
+
+const pages: Record<AppRoute, ReactNode> = {
+  "/": <Dashboard />,
+  "/assets": <Assets />,
+  "/repositories": <Repositories />,
+  "/tasks": <Tasks />,
+  "/knowledge": <Knowledge />,
+  "/automations": <Automations />,
+  "/settings": <Settings />,
+};
 
 function App() {
+  const [route, setRoute] = useState<AppRoute>(() => currentRoute());
+
+  useEffect(() => {
+    const updateRoute = () => setRoute(currentRoute());
+    window.addEventListener("hashchange", updateRoute);
+    return () => window.removeEventListener("hashchange", updateRoute);
+  }, []);
+
   useEffect(() => {
     const tick = () => {
       void tickScheduler().catch(() => {
@@ -25,20 +43,7 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="assets" element={<Assets />} />
-            <Route path="repositories" element={<Repositories />} />
-            <Route path="tasks" element={<Tasks />} />
-            <Route path="knowledge" element={<Knowledge />} />
-            <Route path="automations" element={<Automations />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <Layout currentRoute={route}>{pages[route]}</Layout>
     </ErrorBoundary>
   );
 }

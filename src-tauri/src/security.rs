@@ -113,24 +113,41 @@ pub fn is_excluded_fast(
     #[cfg(not(windows))]
     let (p_norm, r_norm) = (path_str.to_string(), root_path.to_string());
 
-    let relative = if p_norm.starts_with(&r_norm) {
-        &path_str[r_norm.len()..]
-    } else {
-        &path_str
-    };
+    // Derive the suffix from the same normalized representation used for the
+    // prefix comparison. Slicing the original UTF-8 path by a lower-cased byte
+    // length can panic for non-ASCII Windows paths.
+    let relative = p_norm.strip_prefix(&r_norm).unwrap_or(&p_norm);
     let relative = relative.trim_start_matches('/').trim_start_matches('\\');
     let relative_slashes = relative.replace('\\', "/");
+    #[cfg(windows)]
+    let relative_for_matching = relative_slashes.to_lowercase();
+    #[cfg(not(windows))]
+    let relative_for_matching = relative_slashes.clone();
 
     for glob_pattern in compiled_patterns {
-        if glob_pattern.matches(&relative_slashes) {
+        let matches = glob_pattern.matches(&relative_slashes);
+        if matches {
             return true;
         }
     }
 
+    #[cfg(windows)]
     for pattern in exclude_globs {
+        if let Ok(pattern) = glob::Pattern::new(&pattern.to_lowercase()) {
+            if pattern.matches(&relative_for_matching) {
+                return true;
+            }
+        }
+    }
+
+    for pattern in exclude_globs {
+        #[cfg(windows)]
+        let pattern = pattern.to_lowercase();
+        #[cfg(not(windows))]
+        let pattern = pattern.as_str();
         // Also match as a path prefix for directory patterns like "node_modules"
-        if relative_slashes.starts_with(pattern)
-            || relative_slashes.contains(&format!("/{}", pattern))
+        if relative_for_matching.starts_with(pattern)
+            || relative_for_matching.contains(&format!("/{}", pattern))
         {
             return true;
         }
@@ -249,6 +266,16 @@ mod tests {
         // Subpath match (e.g. dist/output.json glob with forward slash)
         assert!(is_excluded(Path::new("C:\\Users\\User\\Projects\\dist\\output.json"), &root));
         assert!(is_excluded(Path::new("C:/Users/User/Projects/dist/output.json"), &root));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_is_excluded_case_insensitive_directory_names() {
+        let root = test_root(Path::new("C:\\Projects"), "read_write");
+        assert!(is_excluded(
+            Path::new("C:\\Projects\\Node_Modules\\pkg\\index.js"),
+            &root
+        ));
     }
 }
 

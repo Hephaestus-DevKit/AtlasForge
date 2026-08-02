@@ -150,10 +150,45 @@ export function ApprovalModal({
                   </p>
                 )}
                 {checks.length > 0 && (
-                  <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--color-info-text)", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--color-info)" }} />
-                    The patch will be tested in an isolated worktree using {checks.length} detected verification command(s).
-                  </p>
+                  <div style={{ marginTop: 12 }}>
+                    <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--color-info-text)", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--color-info)" }} />
+                      Approving this patch also runs these commands in the isolated worktree:
+                    </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {checks.map((check, index) => {
+                        const details = check && typeof check === "object"
+                          ? check as Record<string, unknown>
+                          : {};
+                        const verificationCommand = detailString(details.command) ?? "Unknown command";
+                        const verificationExpanded = detailString(details.expandedCommand);
+                        const verificationRisk = detailString(details.risk);
+                        return (
+                          <div
+                            key={`${verificationCommand}-${index}`}
+                            style={{
+                              padding: 10,
+                              borderRadius: "var(--radius-sm)",
+                              background: "var(--bg-input)",
+                              border: "1px solid var(--border-color)",
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <code style={{ color: "#93c5fd", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+                                {verificationCommand}
+                              </code>
+                              {verificationRisk && <span className="badge badge-warning">{verificationRisk}</span>}
+                            </div>
+                            {verificationExpanded && verificationExpanded !== verificationCommand && (
+                              <pre style={{ margin: "8px 0 0", color: "var(--text-secondary)", fontSize: 11, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap" }}>
+                                {verificationExpanded}
+                              </pre>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </section>
             );

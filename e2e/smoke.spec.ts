@@ -28,7 +28,7 @@ test.describe("AtlasForge Smoke", () => {
   });
 
   test("automations exposes only implemented scheduled notifications", async ({ page }) => {
-    await page.goto("/automations");
+    await page.goto("/#/automations");
     await expect(page.getByRole("heading", { name: "Automations" })).toBeVisible();
     await page.getByRole("button", { name: "New Rule" }).click();
     await expect(page.getByLabel("Trigger")).toHaveValue("Schedule");

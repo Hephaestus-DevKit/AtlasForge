@@ -2,6 +2,18 @@ use crate::db::Db;
 use crate::models::*;
 use std::path::Path;
 
+const IMPLEMENTED_TOOLS: &[&str] = &[
+    "fs.list",
+    "fs.read",
+    "git.status",
+    "git.diff",
+    "shell.verify",
+];
+
+fn is_implemented(tool_name: &str) -> bool {
+    IMPLEMENTED_TOOLS.contains(&tool_name)
+}
+
 /// Tool metadata from the registry.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,7 +60,13 @@ pub fn list_tools(db: &Db) -> Result<Vec<ToolInfo>, String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    Ok(tools)
+    // The database also contains roadmap entries. Do not advertise them as
+    // callable tools until execution, preview, approval and rollback are all
+    // implemented.
+    Ok(tools
+        .into_iter()
+        .filter(|tool| is_implemented(&tool.name))
+        .collect())
 }
 
 /// Check if a tool invocation is permitted based on workspace roots and risk level.
@@ -160,6 +178,9 @@ pub fn invoke_tool(
     dry_run: bool,
     db: &Db,
 ) -> Result<ToolResult, String> {
+    if !is_implemented(tool_name) {
+        return Err(format!("Tool '{}' is not available", tool_name));
+    }
     let risk = get_tool_risk(tool_name);
     let serialized_input = serde_json::to_string(input).map_err(|e| e.to_string())?;
     if !crate::ai_provider::scan_for_secrets(&serialized_input).is_empty() {
@@ -191,16 +212,17 @@ pub fn invoke_tool(
 
     if dry_run {
         let preview = dry_run_preview(tool_name, input);
+        let preview_json = serde_json::to_string(&preview).map_err(|e| e.to_string())?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
             "UPDATE tool_invocation SET status = 'dry_run', output = ?1, completed_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![serde_json::to_string(&preview).unwrap_or_default(), invocation_id],
+            rusqlite::params![preview_json, invocation_id],
         )
         .map_err(|e| e.to_string())?;
 
         return Ok(ToolResult {
             success: true,
-            output: serde_json::to_string(&preview).unwrap_or_default(),
+            output: preview_json,
             error: None,
             was_dry_run: true,
         });
@@ -369,10 +391,11 @@ fn execute_tool(tool_name: &str, input: &serde_json::Value) -> ToolResult {
             }
             match std::fs::read_dir(p) {
                 Ok(read_dir) => {
-                    let entries: Vec<String> = read_dir
+                    let mut entries: Vec<String> = read_dir
                         .filter_map(|e| e.ok())
                         .map(|e| e.file_name().to_string_lossy().to_string())
                         .collect();
+                    entries.sort_unstable();
                     ToolResult {
                         success: true,
                         output: serde_json::to_string(&entries).unwrap_or_default(),
@@ -395,7 +418,11 @@ fn execute_tool(tool_name: &str, input: &serde_json::Value) -> ToolResult {
                     let max_len = 100_000;
                     let truncated = content.len() > max_len;
                     let s = if truncated {
-                        &content[..max_len]
+                        let mut end = max_len;
+                        while !content.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        &content[..end]
                     } else {
                         &content
                     };
@@ -588,5 +615,28 @@ mod tests {
             "command": "npm test",
         });
         assert!(check_permission("shell.verify", &input, &roots, "assisted").is_err());
+    }
+
+    #[test]
+    fn roadmap_tools_are_not_exposed_as_implemented() {
+        assert!(is_implemented("fs.read"));
+        assert!(!is_implemented("git.push"));
+        assert!(!is_implemented("github.create_release"));
+    }
+
+    #[test]
+    fn fs_read_truncates_utf8_at_a_character_boundary() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("unicode.txt");
+        let content = format!("{}界", "a".repeat(99_999));
+        fs::write(&path, content).unwrap();
+
+        let result = execute_tool(
+            "fs.read",
+            &serde_json::json!({"path": path.to_string_lossy()}),
+        );
+        assert!(result.success);
+        assert!(result.output.len() <= 100_000);
+        assert!(result.error.is_some());
     }
 }

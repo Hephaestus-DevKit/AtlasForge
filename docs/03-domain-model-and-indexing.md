@@ -30,7 +30,8 @@ AtlasForge 的数据模型要支持三类查询：
 
 - 所有文件访问必须能追溯到一个 root。
 - root 可以是只读；只读 root 下禁止写操作和删除操作。
-- root 删除后不立即删除历史任务证据，只停止未来扫描。
+- root 删除会撤销未来文件访问并清理关联资产、仓库缓存和验证记录；独立的 Job/JobEvent 时间线与 AuditLog 继续保留。界面必须在删除前明确提示关联数据清理范围。
+- `includeGlobs` 只筛选待发现的仓库：按 root 相对路径或仓库目录名匹配；空列表表示包含全部仓库。无效 glob 必须在保存时拒绝，旧数据中的无效 glob 必须令扫描失败关闭。
 
 ### ProjectAsset
 
@@ -276,6 +277,7 @@ Git 仓库画像。
 
 - `id`
 - `documentId`
+- `path`（为 FTS5 外部内容索引冗余保存，用于可靠删除和重建）
 - `chunkerVersion`
 - `ordinal`
 - `text`

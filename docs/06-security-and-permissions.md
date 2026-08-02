@@ -25,6 +25,7 @@ AtlasForge 的风险高于普通笔记软件，因为它会读本机文件、改
 缓解：
 
 - Tool Broker 限权。
+- Tool Broker 只暴露已有真实执行器的工具；路线图中的写入、发布工具在 preview、审批、审计和回滚闭环完成前不可调用。
 - 验证结果来自工具，不来自模型自述。
 - 高风险动作需要审批。
 - 任务报告引用证据。
@@ -56,6 +57,7 @@ AtlasForge 的风险高于普通笔记软件，因为它会读本机文件、改
 
 - 默认忽略 secret 文件。
 - 内容进入日志、索引、模型上下文前做 secret scan。
+- Secret scan 至少覆盖传统与 fine-grained GitHub token、现代 `sk-*` API key、JWT、AWS key、私钥块以及 `Authorization: Bearer/Basic` 请求头。
 - 审计日志只保存脱敏值。
 - 对疑似 secret 只记录位置和 hash，不记录原文。
 

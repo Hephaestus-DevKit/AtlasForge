@@ -24,6 +24,8 @@
 - 识别 nested repo。
 - 识别普通项目：`package.json`、`pyproject.toml`、`Cargo.toml`、`pom.xml`、`build.gradle`、`go.mod`、`pubspec.yaml`。
 - 识别静态站点、文档站、Android、桌面应用。
+- include glob 按 root 相对路径或仓库目录名筛选；exclude glob 优先并可剪枝目录遍历。
+- 仓库元数据分析采用有界工作池，线程数不超过 CPU 可用并行度、任务数和实现上限（当前为 8）。
 
 ### 远端关联
 

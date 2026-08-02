@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   LayoutDashboard,
   FolderTree,
@@ -11,9 +10,10 @@ import {
   Sun,
   Moon,
 } from "lucide-react";
+import type { AppRoute } from "../routing";
 
-const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+const navItems: ReadonlyArray<{ to: AppRoute; label: string; icon: typeof LayoutDashboard }> = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/assets", label: "Assets", icon: FolderTree },
   { to: "/repositories", label: "Repositories", icon: GitBranch },
   { to: "/tasks", label: "Tasks", icon: ListTodo },
@@ -22,7 +22,7 @@ const navItems = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function Layout() {
+export function Layout({ currentRoute, children }: { currentRoute: AppRoute; children: ReactNode }) {
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem("theme") || "dark";
   });
@@ -78,33 +78,28 @@ export function Layout() {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 12px" }}>
           {navItems.map((item) => (
-            <NavLink
+            <a
               key={item.to}
-              to={item.to}
-              end={item.end}
-              style={({ isActive }) => ({
+              href={`#${item.to}`}
+              style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
                 padding: "10px 16px",
-                color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-                background: isActive ? "rgba(99, 102, 241, 0.08)" : "transparent",
-                border: isActive ? "1px solid rgba(99, 102, 241, 0.2)" : "1px solid transparent",
+                color: currentRoute === item.to ? "var(--text-primary)" : "var(--text-secondary)",
+                background: currentRoute === item.to ? "rgba(99, 102, 241, 0.08)" : "transparent",
+                border: currentRoute === item.to ? "1px solid rgba(99, 102, 241, 0.2)" : "1px solid transparent",
                 textDecoration: "none",
                 fontSize: 14,
-                fontWeight: isActive ? 600 : 500,
+                fontWeight: currentRoute === item.to ? 600 : 500,
                 borderRadius: "var(--radius-sm)",
                 transition: "all var(--transition-fast)",
-              })}
-              className={({ isActive }) => isActive ? "" : "sidebar-link-hover"}
+              }}
+              className={currentRoute === item.to ? "" : "sidebar-link-hover"}
             >
-              {({ isActive }) => (
-                <>
-                  <item.icon size={18} color={isActive ? "var(--color-primary)" : "var(--text-secondary)"} style={{ transition: "color var(--transition-fast)" }} />
-                  {item.label}
-                </>
-              )}
-            </NavLink>
+              <item.icon size={18} color={currentRoute === item.to ? "var(--color-primary)" : "var(--text-secondary)"} style={{ transition: "color var(--transition-fast)" }} />
+              {item.label}
+            </a>
           ))}
         </div>
         
@@ -161,7 +156,7 @@ export function Layout() {
         className="scrollbar-custom"
       >
         <div className="fade-in" style={{ maxWidth: 1400, margin: "0 auto", height: "100%" }}>
-          <Outlet />
+          {children}
         </div>
       </main>
     </div>

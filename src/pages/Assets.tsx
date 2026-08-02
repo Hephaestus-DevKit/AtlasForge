@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { listWorkspaceRoots, addWorkspaceRoot, removeWorkspaceRoot, startScan, pickFolder, listScanErrors } from "../api/ipc";
-import type { WorkspaceRoot, AddRootInput, ScanResult, ScanErrorRecord } from "../types";
+import type { WorkspaceRoot, AddRootInput, ScanResult, ScanErrorRecord, AccessMode } from "../types";
 import { Plus, Trash2, FolderTree, FolderOpen, Play, Scan, AlertTriangle } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { ToastContainer, type ToastMessage } from "../components/Toast";
+import { errorMessage } from "../utils/errors";
 
 const DEFAULT_EXCLUDE_GLOBS = [
   "node_modules",
@@ -66,8 +67,8 @@ export function Assets() {
         }
       }
       setScanErrors(errorsMap);
-    } catch (e: any) {
-      setError(e?.toString() ?? "Failed to load roots");
+    } catch (e) {
+      setError(errorMessage(e, "Failed to load roots"));
     }
   }
 
@@ -78,8 +79,8 @@ export function Assets() {
       if (folder) {
         setForm((prev) => ({ ...prev, path: folder }));
       }
-    } catch (e: any) {
-      setError(e?.toString() ?? "Failed to open folder picker");
+    } catch (e) {
+      setError(errorMessage(e, "Failed to open folder picker"));
     }
   }
 
@@ -97,8 +98,8 @@ export function Assets() {
         excludeGlobs: DEFAULT_EXCLUDE_GLOBS,
       });
       await loadRoots();
-    } catch (e: any) {
-      setError(e?.toString() ?? "Failed to add root");
+    } catch (e) {
+      setError(errorMessage(e, "Failed to add root"));
     }
   }
 
@@ -112,8 +113,8 @@ export function Assets() {
           await removeWorkspaceRoot(id);
           showToast("Root removed", "success");
           await loadRoots();
-        } catch (e: any) {
-          setError(e?.toString() ?? "Failed to remove root");
+        } catch (e) {
+          setError(errorMessage(e, "Failed to remove root"));
         }
       },
     });
@@ -128,8 +129,8 @@ export function Assets() {
       if (result.errors.length > 0) {
         setError(`Scan completed with ${result.errors.length} error(s): ${result.errors.slice(0, 3).join("; ")}`);
       }
-    } catch (e: any) {
-      setError(e?.toString() ?? "Scan failed");
+    } catch (e) {
+      setError(errorMessage(e, "Scan failed"));
     } finally {
       setScanningRootId(null);
     }
@@ -144,8 +145,8 @@ export function Assets() {
       if (result.errors.length > 0) {
         setError(`Scan completed with ${result.errors.length} error(s): ${result.errors.slice(0, 3).join("; ")}`);
       }
-    } catch (e: any) {
-      setError(e?.toString() ?? "Scan failed");
+    } catch (e) {
+      setError(errorMessage(e, "Scan failed"));
     } finally {
       setScanning(false);
     }
@@ -270,7 +271,7 @@ export function Assets() {
               <select
                 id="af-root-access"
                 value={form.accessMode}
-                onChange={(e) => setForm({ ...form, accessMode: e.target.value as any })}
+                onChange={(e) => setForm({ ...form, accessMode: e.target.value as AccessMode })}
                 className="select-field"
                 style={{ width: "100%" }}
               >
@@ -290,6 +291,22 @@ export function Assets() {
                 />
                 Enable automatic background scanning
               </label>
+            </div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label htmlFor="af-root-include" style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 600 }}>
+              Include Repository Globs (optional, comma-separated)
+            </label>
+            <input
+              id="af-root-include"
+              value={form.includeGlobs.join(", ")}
+              onChange={(e) => setForm({ ...form, includeGlobs: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+              placeholder="clients/**, acme-*"
+              className="input-field"
+              style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}
+            />
+            <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-muted)" }}>
+              Matches repository paths relative to this root, or repository folder names. Empty includes every repository.
             </div>
           </div>
           <div style={{ marginBottom: 20 }}>
@@ -357,6 +374,11 @@ export function Assets() {
                   {root.excludeGlobs.length > 0 && (
                     <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)", wordBreak: "break-all" }}>
                       <span style={{ fontWeight: 600 }}>Exclude:</span> {root.excludeGlobs.join(", ")}
+                    </div>
+                  )}
+                  {root.includeGlobs.length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)", wordBreak: "break-all" }}>
+                      <span style={{ fontWeight: 600 }}>Include:</span> {root.includeGlobs.join(", ")}
                     </div>
                   )}
                   {(scanErrors[root.id]?.length ?? 0) > 0 && (

@@ -30,6 +30,7 @@ pub const MIGRATION_013_SQL: &str = include_str!("../migrations/013_verification
 pub const MIGRATION_014_SQL: &str = include_str!("../migrations/014_trusted_execution.sql");
 pub const MIGRATION_015_SQL: &str = include_str!("../migrations/015_incremental_index.sql");
 pub const MIGRATION_016_SQL: &str = include_str!("../migrations/016_security_wording.sql");
+pub const MIGRATION_017_SQL: &str = include_str!("../migrations/017_fts_trigger_cleanup.sql");
 
 pub struct Db {
     pub conn: Mutex<Connection>,
@@ -66,6 +67,7 @@ impl Db {
             MIGRATION_014_SQL,
             MIGRATION_015_SQL,
             MIGRATION_016_SQL,
+            MIGRATION_017_SQL,
         ];
 
         // Track applied migrations
@@ -183,7 +185,7 @@ mod tests {
             let applied: i64 = conn
                 .query_row("SELECT COUNT(*) FROM _migration", [], |row| row.get(0))
                 .unwrap();
-            assert_eq!(applied, 16);
+            assert_eq!(applied, 17);
         }
         drop(db);
 
@@ -192,7 +194,7 @@ mod tests {
         let applied: i64 = conn
             .query_row("SELECT COUNT(*) FROM _migration", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(applied, 16);
+        assert_eq!(applied, 17);
     }
 
     #[test]

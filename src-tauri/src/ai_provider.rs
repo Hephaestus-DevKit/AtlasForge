@@ -293,7 +293,12 @@ fn get_secret_regexes() -> &'static Vec<(regex::Regex, &'static str)> {
             ),
             (r"ghp_[A-Za-z0-9]{36}", "GitHub PAT"),
             (r"gho_[A-Za-z0-9]{36}", "GitHub OAuth"),
-            (r"sk-[A-Za-z0-9]{48}", "OpenAI API key"),
+            (r"github_pat_[A-Za-z0-9_]{20,}", "GitHub fine-grained PAT"),
+            (r"sk-[A-Za-z0-9_-]{20,}", "OpenAI-compatible API key"),
+            (
+                r"(?i)authorization\s*:\s*(?:bearer|basic)\s+[A-Za-z0-9+/=._~-]+",
+                "Authorization header",
+            ),
             (
                 r"-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----",
                 "Private key",
@@ -322,7 +327,9 @@ fn get_redact_regexes() -> &'static Vec<regex::Regex> {
             r#"(?i)(api[_-]?key|apikey|secret|token|password|passwd|auth)\s*[:=]\s*['"]?[A-Za-z0-9+/=_-]{16,}"#,
             r"ghp_[A-Za-z0-9]{36}",
             r"gho_[A-Za-z0-9]{36}",
-            r"sk-[A-Za-z0-9]{48}",
+            r"github_pat_[A-Za-z0-9_]{20,}",
+            r"sk-[A-Za-z0-9_-]{20,}",
+            r"(?i)authorization\s*:\s*(?:bearer|basic)\s+[A-Za-z0-9+/=._~-]+",
             r"AKIA[0-9A-Z]{16}",
             r"eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*",
             r"(?s)-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----.*?-----END (?:RSA |EC |DSA )?PRIVATE KEY-----",
@@ -856,5 +863,23 @@ mod tests {
         let matches = scan_for_secrets("token=abcdefghijklmnop123456");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].preview, "[REDACTED]");
+    }
+
+    #[test]
+    fn detects_and_redacts_modern_credentials_and_authorization_headers() {
+        let content = concat!(
+            "github_pat_abcdefghijklmnopqrstuvwxyz123456\n",
+            "sk-proj-abcdefghijklmnopqrstuvwxyz123456\n",
+            "Authorization: Bearer opaque.access-token_123456\n",
+        );
+        let matches = scan_for_secrets(content);
+        assert!(matches.iter().any(|item| item.label == "GitHub fine-grained PAT"));
+        assert!(matches.iter().any(|item| item.label == "OpenAI-compatible API key"));
+        assert!(matches.iter().any(|item| item.label == "Authorization header"));
+
+        let redacted = redact_secrets(content);
+        assert!(!redacted.contains("github_pat_"));
+        assert!(!redacted.contains("sk-proj-"));
+        assert!(!redacted.to_lowercase().contains("authorization:"));
     }
 }

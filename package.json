@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
@@ -21,8 +24,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "lucide-react": "^0.441.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

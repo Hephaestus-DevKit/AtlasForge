@@ -1,4 +1,5 @@
 use crate::db::Db;
+use rusqlite::OptionalExtension;
 use serde_json::Value;
 
 /// GitHub integration state for a repo.
@@ -276,8 +277,17 @@ pub fn resolve_github_repo(
         (false, None, None)
     };
 
+    // Keep a stable integration id when resolving the same repository again.
+    // Replacing a row with a new id would cascade-delete all previously synced
+    // workflow, PR, and release evidence.
+    let existing_id = load_integration(repo_id, db)?
+        .filter(|value| {
+            value.github_owner.eq_ignore_ascii_case(&owner)
+                && value.github_repo.eq_ignore_ascii_case(&repo_name)
+        })
+        .map(|value| value.id);
     let integration = GitHubIntegration {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: existing_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         repo_id: repo_id.to_string(),
         github_owner: owner,
         github_repo: repo_name,
@@ -329,10 +339,19 @@ pub fn sync_workflow_runs(
         let run_id = run
             .get("databaseId")
             .and_then(|v| v.as_i64())
-            .unwrap_or(0)
+            .ok_or_else(|| "Workflow run response is missing databaseId".to_string())?
             .to_string();
+        let stable_id = conn
+            .query_row(
+                "SELECT id FROM github_workflow_run WHERE integration_id = ?1 AND run_id = ?2",
+                rusqlite::params![integration.id, run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("Failed to resolve workflow run identity: {}", error))?
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let wr = WorkflowRun {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: stable_id,
             integration_id: integration.id.clone(),
             run_id: run_id.clone(),
             workflow_name: run
@@ -369,12 +388,21 @@ pub fn sync_workflow_runs(
 
         // Upsert
         conn.execute(
-            "INSERT OR REPLACE INTO github_workflow_run (id, integration_id, run_id, workflow_name, branch, status, conclusion, triggered_at, completed_at, url) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO github_workflow_run (id, integration_id, run_id, workflow_name, branch, status, conclusion, triggered_at, completed_at, url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(integration_id, run_id) DO UPDATE SET
+               workflow_name = excluded.workflow_name,
+               branch = excluded.branch,
+               status = excluded.status,
+               conclusion = excluded.conclusion,
+               triggered_at = excluded.triggered_at,
+               completed_at = excluded.completed_at,
+               url = excluded.url",
             rusqlite::params![
                 wr.id, wr.integration_id, wr.run_id, wr.workflow_name, wr.branch,
                 wr.status, wr.conclusion, wr.triggered_at, wr.completed_at, wr.url,
             ],
-        ).ok();
+        ).map_err(|error| format!("Failed to store workflow run: {}", error))?;
 
         workflow_runs.push(wr);
     }
@@ -414,20 +442,34 @@ pub fn sync_prs(integration: &GitHubIntegration, db: &Db) -> Result<Vec<GitHubPR
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     for pr in prs {
+        let pr_number = pr
+            .get("number")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| "Pull request response is missing number".to_string())?;
+        let state = normalize_pr_state(
+            pr.get("state")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| "Pull request response is missing state".to_string())?,
+        )?;
+        let stable_id = conn
+            .query_row(
+                "SELECT id FROM github_pr WHERE integration_id = ?1 AND pr_number = ?2",
+                rusqlite::params![integration.id, pr_number],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("Failed to resolve pull request identity: {}", error))?
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let gh_pr = GitHubPR {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: stable_id,
             integration_id: integration.id.clone(),
-            pr_number: pr.get("number").and_then(|v| v.as_i64()).unwrap_or(0),
+            pr_number,
             title: pr
                 .get("title")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            state: pr
-                .get("state")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
+            state,
             author: pr
                 .get("author")
                 .and_then(|a| a.get("login"))
@@ -444,12 +486,20 @@ pub fn sync_prs(integration: &GitHubIntegration, db: &Db) -> Result<Vec<GitHubPR
         };
 
         conn.execute(
-            "INSERT OR REPLACE INTO github_pr (id, integration_id, pr_number, title, state, author, branch, url, created_at_gh, updated_at_gh) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'), datetime('now'))",
+            "INSERT INTO github_pr (id, integration_id, pr_number, title, state, author, branch, url, created_at_gh, updated_at_gh)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'), datetime('now'))
+             ON CONFLICT(integration_id, pr_number) DO UPDATE SET
+               title = excluded.title,
+               state = excluded.state,
+               author = excluded.author,
+               branch = excluded.branch,
+               url = excluded.url,
+               updated_at_gh = excluded.updated_at_gh",
             rusqlite::params![
                 gh_pr.id, gh_pr.integration_id, gh_pr.pr_number, gh_pr.title,
                 gh_pr.state, gh_pr.author, gh_pr.branch, gh_pr.url,
             ],
-        ).ok();
+        ).map_err(|error| format!("Failed to store pull request: {}", error))?;
 
         result.push(gh_pr);
     }
@@ -490,14 +540,24 @@ pub fn sync_releases(
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     for rel in releases {
+        let release_id = rel
+            .get("databaseId")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| "Release response is missing databaseId".to_string())?
+            .to_string();
+        let stable_id = conn
+            .query_row(
+                "SELECT id FROM github_release WHERE integration_id = ?1 AND release_id = ?2",
+                rusqlite::params![integration.id, release_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("Failed to resolve release identity: {}", error))?
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let gh_rel = GitHubRelease {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: stable_id,
             integration_id: integration.id.clone(),
-            release_id: rel
-                .get("databaseId")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                .to_string(),
+            release_id,
             tag_name: rel
                 .get("tagName")
                 .and_then(|v| v.as_str())
@@ -526,13 +586,21 @@ pub fn sync_releases(
         };
 
         conn.execute(
-            "INSERT OR REPLACE INTO github_release (id, integration_id, release_id, tag_name, name, is_draft, is_prerelease, published_at, url) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO github_release (id, integration_id, release_id, tag_name, name, is_draft, is_prerelease, published_at, url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(integration_id, release_id) DO UPDATE SET
+               tag_name = excluded.tag_name,
+               name = excluded.name,
+               is_draft = excluded.is_draft,
+               is_prerelease = excluded.is_prerelease,
+               published_at = excluded.published_at,
+               url = excluded.url",
             rusqlite::params![
                 gh_rel.id, gh_rel.integration_id, gh_rel.release_id, gh_rel.tag_name,
                 gh_rel.name, gh_rel.is_draft as i32, gh_rel.is_prerelease as i32,
                 gh_rel.published_at, gh_rel.url,
             ],
-        ).ok();
+        ).map_err(|error| format!("Failed to store release: {}", error))?;
 
         result.push(gh_rel);
     }
@@ -679,6 +747,15 @@ pub fn rerun_workflow(integration: &GitHubIntegration, run_id: &str) -> Result<(
 
 // --- Internal ---
 
+fn normalize_pr_state(state: &str) -> Result<String, String> {
+    let normalized = state.to_ascii_lowercase();
+    if matches!(normalized.as_str(), "open" | "closed" | "merged") {
+        Ok(normalized)
+    } else {
+        Err(format!("Unsupported pull request state: {}", state))
+    }
+}
+
 fn parse_github_url(url: &str) -> Result<(String, String), String> {
     // Handle https://github.com/owner/repo.git
     // Handle git@github.com:owner/repo.git
@@ -700,9 +777,39 @@ fn parse_github_url(url: &str) -> Result<(String, String), String> {
 }
 
 fn save_integration(integration: &GitHubIntegration, db: &Db) -> Result<(), String> {
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT OR REPLACE INTO github_integration (id, repo_id, github_owner, github_repo, is_fork, default_branch, visibility, last_synced_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let existing_remote = tx
+        .query_row(
+            "SELECT github_owner, github_repo FROM github_integration WHERE repo_id = ?1",
+            rusqlite::params![integration.repo_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if existing_remote.is_some_and(|(owner, repo)| {
+        !owner.eq_ignore_ascii_case(&integration.github_owner)
+            || !repo.eq_ignore_ascii_case(&integration.github_repo)
+    }) {
+        // A local repository may be repointed to another GitHub remote. In
+        // that case old workflow/PR/release evidence belongs to a different
+        // remote and must be removed via the integration cascade.
+        tx.execute(
+            "DELETE FROM github_integration WHERE repo_id = ?1",
+            rusqlite::params![integration.repo_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.execute(
+        "INSERT INTO github_integration (id, repo_id, github_owner, github_repo, is_fork, default_branch, visibility, last_synced_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(repo_id) DO UPDATE SET
+           github_owner = excluded.github_owner,
+           github_repo = excluded.github_repo,
+           is_fork = excluded.is_fork,
+           default_branch = excluded.default_branch,
+           visibility = excluded.visibility,
+           last_synced_at = excluded.last_synced_at",
         rusqlite::params![
             integration.id,
             integration.repo_id,
@@ -715,6 +822,7 @@ fn save_integration(integration: &GitHubIntegration, db: &Db) -> Result<(), Stri
         ],
     )
     .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -742,5 +850,91 @@ pub fn load_integration(repo_id: &str, db: &Db) -> Result<Option<GitHubIntegrati
         Ok(integration) => Ok(Some(integration)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn integration(id: &str, owner: &str, repo: &str) -> GitHubIntegration {
+        GitHubIntegration {
+            id: id.into(),
+            repo_id: "repo-id".into(),
+            github_owner: owner.into(),
+            github_repo: repo.into(),
+            is_fork: false,
+            default_branch: Some("main".into()),
+            visibility: Some("private".into()),
+            last_synced_at: None,
+        }
+    }
+
+    #[test]
+    fn github_pr_states_are_normalized_for_the_database_constraint() {
+        assert_eq!(normalize_pr_state("OPEN").unwrap(), "open");
+        assert_eq!(normalize_pr_state("MERGED").unwrap(), "merged");
+        assert!(normalize_pr_state("UNKNOWN").is_err());
+    }
+
+    #[test]
+    fn parses_https_and_ssh_github_remotes() {
+        assert_eq!(
+            parse_github_url("https://github.com/acme/widget.git").unwrap(),
+            ("acme".into(), "widget".into())
+        );
+        assert_eq!(
+            parse_github_url("git@github.com:acme/widget.git").unwrap(),
+            ("acme".into(), "widget".into())
+        );
+    }
+
+    #[test]
+    fn changing_remote_replaces_integration_and_cascades_stale_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::new(&temp.path().join("github.db")).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO workspace_root(id, path, label) VALUES('root', 'C:/root', 'Root')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO project_asset(id, root_id, path, name) VALUES('asset', 'root', 'C:/root/repo', 'Repo')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO repository(id, asset_id, worktree_path, git_dir_path) VALUES('repo-id', 'asset', 'C:/root/repo', 'C:/root/repo/.git')",
+                [],
+            )
+            .unwrap();
+        }
+
+        save_integration(&integration("old", "acme", "one"), &db).unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO github_workflow_run(id, integration_id, run_id, workflow_name, status) VALUES('run', 'old', '1', 'CI', 'completed')",
+                [],
+            )
+            .unwrap();
+
+        save_integration(&integration("new", "acme", "two"), &db).unwrap();
+        let conn = db.conn.lock().unwrap();
+        let integration_id: String = conn
+            .query_row(
+                "SELECT id FROM github_integration WHERE repo_id = 'repo-id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let evidence_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM github_workflow_run", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integration_id, "new");
+        assert_eq!(evidence_count, 0);
     }
 }
