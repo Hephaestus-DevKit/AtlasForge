@@ -30,7 +30,7 @@ Thumbs.db
 .idea/
 
 # AtomCode local-scope configs (machine-specific)
-.atomcode/local/
+.atomcode/
 
 # Playwright
 test-results/

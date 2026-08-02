@@ -14,6 +14,7 @@ mod scanner;
 mod security;
 mod tool_broker;
 mod verification;
+mod workspace;
 
 use commands::AppState;
 use std::sync::Arc;
@@ -95,28 +96,28 @@ pub fn run() {
             commands::list_fix_plans_cmd,
             commands::preview_fix_plan_context_cmd,
             // GitHub
-            commands::check_gh_auth_cmd,
-            commands::resolve_github_repo_cmd,
-            commands::get_github_evidence_cmd,
-            commands::get_github_integration_cmd,
-            commands::sync_github_cmd,
-            commands::create_pr_cmd,
-            commands::create_release_cmd,
-            commands::rerun_workflow_cmd,
+            commands::github_commands::check_gh_auth_cmd,
+            commands::github_commands::resolve_github_repo_cmd,
+            commands::github_commands::get_github_evidence_cmd,
+            commands::github_commands::get_github_integration_cmd,
+            commands::github_commands::sync_github_cmd,
+            commands::github_commands::create_pr_cmd,
+            commands::github_commands::create_release_cmd,
+            commands::github_commands::rerun_workflow_cmd,
             // Verification
-            commands::detect_commands_cmd,
-            commands::run_verification_cmd,
-            commands::run_batch_verification_cmd,
-            commands::list_verification_runs_cmd,
+            commands::verification_commands::detect_commands_cmd,
+            commands::verification_commands::run_verification_cmd,
+            commands::verification_commands::run_batch_verification_cmd,
+            commands::verification_commands::list_verification_runs_cmd,
             // Automation
-            commands::list_automation_rules_cmd,
-            commands::create_automation_rule_cmd,
-            commands::update_automation_rule_cmd,
-            commands::delete_automation_rule_cmd,
-            commands::list_notifications_cmd,
-            commands::mark_notification_read_cmd,
-            commands::mark_all_notifications_read_cmd,
-            commands::tick_scheduler_cmd,
+            commands::automation_commands::list_automation_rules_cmd,
+            commands::automation_commands::create_automation_rule_cmd,
+            commands::automation_commands::update_automation_rule_cmd,
+            commands::automation_commands::delete_automation_rule_cmd,
+            commands::automation_commands::list_notifications_cmd,
+            commands::automation_commands::mark_notification_read_cmd,
+            commands::automation_commands::mark_all_notifications_read_cmd,
+            commands::automation_commands::tick_scheduler_cmd,
             commands::list_scan_errors_cmd,
         ])
         .run(tauri::generate_context!())

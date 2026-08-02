@@ -5,7 +5,7 @@ this matrix describes what the application actually does.
 
 | Capability | Status | Current behavior | Evidence / gate | Next dependency |
 | --- | --- | --- | --- | --- |
-| Local Git baseline | Implemented | The source tree is a local Git repository with a validated baseline commit. | `git status`, `git log -1` | Add a remote only when publication is deliberate. |
+| Source control baseline | Implemented | `main` is synchronized to the public GitHub repository; Windows CI and Pages are required release evidence. | `git status`, GitHub Actions | Protect the branch when contributor workflow requires it. |
 | Job lifecycle | Implemented with bounded scope | Jobs transition through pending, running, completed, failed, and cancelled states. Verification processes receive cancellation signals. Interrupted running jobs are marked failed on startup. | Rust job and verification tests | Event streaming can replace UI polling if log volume becomes high. |
 | Job retry | Implemented with safety limits | Scan, reindex, audit, and GitHub read-sync jobs can be replayed by a background worker. Jobs requiring fresh prompts, secrets, or approvals must be restarted from their feature page. | Rust job tests | Add replay handlers only when inputs are complete and idempotent. |
 | Verification execution | Implemented | Commands are detected from manifests, output is drained concurrently and bounded, and timeout/cancellation terminates the process tree on Windows. | Large-output and cancellation tests | Add non-Windows process-group coverage when those targets are supported. |

@@ -21,14 +21,14 @@ AtlasForge 自己必须成为它想帮助用户达到的样子：
 - UI smoke。
 - build。
 
-示例命令以后由真实项目决定：
+当前可重复门禁：
 
-```text
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm test:e2e
-pnpm build
+```powershell
+npm run verify-dev
+npm run verify-dev -- -E2E
+
+# 仅在需要原生安装包时增加
+npm run verify-release -- -E2E -FullBuild
 ```
 
 ## 数据库验证
@@ -130,7 +130,7 @@ Read：
 - workflow no runs。
 - release missing。
 
-Write：
+Write（规划用例；0.1.0 命令边界硬关闭）：
 
 - create PR dry-run。
 - create PR real fixture repo。
@@ -176,15 +176,20 @@ Playwright flows：
 
 ## 发布验收
 
-发布 AtlasForge 自身前：
+发布 AtlasForge 源码版本前：
 
 - clean worktree。
 - version consistent。
-- build artifacts generated。
-- installer smoke。
+- Windows CI（含 Rust tests）通过。
+- GitHub Pages 部署通过。
 - release notes。
 - GitHub release created。
-- download link verified。
+
+发布原生安装包时额外要求：
+
+- bundle artifacts generated。
+- installer smoke checklist 通过。
+- release asset download link verified。
 
 ## 失败处理标准
 

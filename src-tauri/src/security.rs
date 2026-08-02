@@ -146,7 +146,7 @@ pub fn is_excluded_fast(
         #[cfg(not(windows))]
         let pattern = pattern.as_str();
         // Also match as a path prefix for directory patterns like "node_modules"
-        if relative_for_matching.starts_with(pattern)
+        if relative_for_matching.starts_with(&pattern)
             || relative_for_matching.contains(&format!("/{}", pattern))
         {
             return true;

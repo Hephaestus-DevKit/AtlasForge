@@ -22,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Split the repository workspace into feature-scoped tabs; separate Rust workspace, GitHub, verification, and automation command modules from the central dispatcher.
+- Remove committed editor-generated `.atomcode` state, including its binary repository index, and ignore future machine-local cache files.
+- Replace the README's stale demo URL and broad product claims with the 0.1.0 capability boundary, architecture, security model, and reproducible gates.
 - Preserve GitHub integration and evidence identity across repeated resolution, normalize PR states, reject malformed identifiers, and surface database sync failures.
 - Repair FTS path cleanup so reindexing and file deletion do not leave stale search terms.
 - Match excluded workspace paths case-insensitively on Windows and avoid Unicode path slicing failures.

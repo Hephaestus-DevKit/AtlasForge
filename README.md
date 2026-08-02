@@ -1,106 +1,123 @@
-# 🪐 AtlasForge
+# AtlasForge
 
-<div align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows%20x64-blue?style=for-the-badge&logo=windows" alt="Platform" />
-  <img src="https://img.shields.io/badge/Framework-Tauri%20v2-eceff4?style=for-the-badge&logo=tauri&logoColor=24c8fa" alt="Tauri" />
-  <img src="https://img.shields.io/badge/Frontend-React%20%2B%20TypeScript-blue?style=for-the-badge&logo=react&logoColor=61dafb" alt="React" />
-  <img src="https://img.shields.io/badge/Backend-Rust-black?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
-</div>
+[![CI](https://github.com/Hephaestus-DevKit/AtlasForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Hephaestus-DevKit/AtlasForge/actions/workflows/ci.yml)
+[![Pages](https://github.com/Hephaestus-DevKit/AtlasForge/actions/workflows/deploy.yml/badge.svg)](https://github.com/Hephaestus-DevKit/AtlasForge/actions/workflows/deploy.yml)
+[![Release](https://img.shields.io/github/v/release/Hephaestus-DevKit/AtlasForge?include_prereleases)](https://github.com/Hephaestus-DevKit/AtlasForge/releases)
 
-<div align="center">
-  <h3>
-    🌐 <a href="https://wangjiehu.github.io/AtlasForge/">点击在线体验 Web Demo</a>
-  </h3>
-</div>
+AtlasForge 是一个面向 Windows 的本地优先多仓库工程工作台。它使用 Tauri 2、Rust、React 和 SQLite，在可信的本机边界内完成仓库发现、工程画像、健康审计、文本索引、验证命令和受控 AI 修复。
 
-<br />
+当前版本：`0.1.0`。这是首个 alpha 版本，重点是建立可运行、可审计、可恢复的本地闭环，不代表所有规划能力都已完成。
 
-**AtlasForge** 是一款**本地优先（Local-First）的个人 AI 软件工程协同平台与多仓库自动维护引擎**。
+[打开 Web Demo](https://hephaestus-devkit.github.io/AtlasForge/)
 
-它旨在成为开发者在本地机器上的“自动驾驶”工程运营系统，通过连接强大的本地或云端 AI 模型，帮助开发者自动进行代码审查、缺陷修复、健康度审计、测试验证以及变更沉淀。
+> Web Demo 用于查看界面与浏览器内交互。浏览器无法访问 Tauri 本机后端，因此目录扫描、Git、SQLite、命令执行和本机 AI Provider 等能力需要从源码运行桌面应用。
 
-> [!NOTE]
-> **在线体验说明**：Web Demo 部署在 GitHub Pages 上，供您预览和体验 AtlasForge 完整的 UI 交互与设计。由于 Web 浏览器沙箱限制，在线版本无法调用本地的 Tauri 后端（如本地文件系统读写、Git 仓库扫描等）。如需完整体验全部功能，请下载并在本地运行。
+## 当前能力
 
----
+| 领域 | 0.1.0 状态 |
+| --- | --- |
+| 工作区 | 校验 include/exclude glob，发现并画像多个 Git 仓库，有界并行扫描 |
+| 审计与索引 | 确定性工程规则、健康快照、增量文本索引、敏感信息脱敏、全文检索 |
+| 任务 | 持久化生命周期、进度事件、取消与受限重试、通知和审计记录 |
+| 验证 | 从项目清单检测命令；批准后隔离执行，限制输出并记录证据 |
+| AI 修复 | Provider 探测、上下文预览、修复计划、单文件补丁提案、批准、验证和哈希保护回滚 |
+| GitHub | 读取并缓存 Actions、Pull Request 和 Release 信息；写操作默认关闭 |
+| Tool Broker | 仅开放已实现的 `fs.list`、`fs.read`、`git.status`、`git.diff`、`shell.verify` |
 
-## 🗺️ 名字的含义
+完整状态和非目标以 [能力矩阵](docs/13-capability-matrix.md) 为准。GitHub 写操作、自动更新器、正式安装包发布、向量检索和无人值守修改不属于 0.1.0 的已交付范围。
 
-* **Atlas（星图）**：将你本地与 GitHub 上的海量项目、源码库、文档以及资产状态，绘制成一张高维的、可语义检索、可推理追踪的知识地图。
-* **Forge（锻造）**：不只是停留在聊天框中的修改建议，而是将 AI 的分析与方案真正“锻造”成可通过编译、经过自动化验证、具备安全撤销链路的真实交付代码。
+## 安全边界
 
----
+- UI 只能通过 Tauri IPC 请求操作，不能直接执行 Shell、写文件或修改 GitHub。
+- 工作区具有只读/读写访问模式；路径必须通过授权根目录和排除规则校验。
+- 仓库控制的验证命令需要一次性、限时且绑定仓库状态的批准。
+- 补丁只支持干净工作树中的单文件文本变更，并先在临时 detached worktree 中验证。
+- 回滚前会检查基线哈希；文件已有后续修改时拒绝覆盖。
+- API 密钥只引用环境变量名，不写入数据库；发送或索引文本前执行敏感信息脱敏。
+- GitHub mutation 在具备专用预览与批准界面前保持硬关闭。
 
-## 🚀 核心特性
+这些约束及其威胁模型见 [安全与权限设计](docs/06-security-and-permissions.md) 和 [可信执行 ADR](docs/14-adr-trusted-execution.md)。
 
-### 1. 📂 多仓库自动发现与画像
-* **有界并行扫描**：采用 Rust 作用域线程并行分析发现的 Git 仓库，并根据 CPU 数和任务量限制工作线程，避免大型目录耗尽系统资源。
-* **仓库深度画像**：自动识别项目技术栈（Rust, TypeScript, Python 等）、分析项目完整度（README、测试覆盖、CI 配置），自动生成健康审计报告。
+## 快速开始
 
-### 2. ⚡ 高性能增量索引 (Knowledge base)
-* **批量事务提交**：避免逐文件提交数据库，在单次 SQLite 事务中批量保存索引，降低写入与锁竞争开销。
-* **智能增量比对**：通过极速的 mtime 内存哈希比对，自动跳过未修改的文件，只有变更文件才会触发 AI 敏感词过滤、分块（Chunking）和数据库写入。
-* **有界并发切片**：并行对源码文件进行敏感信息脱敏，并按标题、声明和行数启发式分块。
+### 环境要求
 
-### 3. 🛡️ 严格的安全与权限模型 (Security-First)
-* **零密钥持久化**：所有 AI API 密钥均通过本地环境变量（如 `DEEPSEEK_API_KEY`）临时引用，数据库与配置文件中不保存任何明文 Token。
-* **双层沙箱验证**：AI 提出的代码修改补丁（Unified Diff）会首先自动在隔离的 `git worktree` 沙箱中应用，并通过项目原生的编译与测试命令进行验证，验证通过后才会安全应用到你的工作区。
-* **一键无损撤销**：对已应用的代码修改进行完整性哈希校验，支持一键无损 Rollback，绝不破坏你的手写代码。
+- Windows 10/11 x64
+- Node.js `>= 20.19`
+- Rust stable，目标 `x86_64-pc-windows-msvc`
+- Visual Studio Build Tools 2022，安装“使用 C++ 的桌面开发”工作负载
 
-### 4. 🎛️ 多协议 AI 提供商适配
-* **4 种原生模式选择**：
-  * **Local (Ollama)**：支持完全本地运行的开源模型（如 Llama3、Qwen2.5），数据不出本地。
-  * **DeepSeek**：原生适配 DeepSeek 官方 API（支持 `deepseek-chat` / `deepseek-coder`），默认启用官方优化端点。
-  * **OpenAI**：支持标准 GPT 家族模型及任意 OpenAI 兼容的第三方中转服务。
-  * **Anthropic**：原生适配 Claude 官方 Messages API 协议，并深度兼容支持 `x-api-key` 与 `Bearer` 双头鉴权的中转网关（如 OneAPI、LiteLLM）。
-* **动态参数注入 (JSON)**：支持为每个 AI 提供商配置自定义选项（如 `{"temperature": 0.1, "max_tokens": 8192}`），精细化控制生成效果。
-* **一键连接性测试**：内建健康检测（Probe），实时反馈延迟（Latency）与可用模型列表。
+### 运行桌面应用
 
----
-
-## 🛠️ 快速开始
-
-### 前置要求
-为了在本地编译和运行 AtlasForge，你的机器需要具备以下环境：
-* **Node.js** ≥ 20.19
-* **Rust Stable** (推荐安装 `x86_64-pc-windows-msvc` 工具链)
-* **Visual Studio Build Tools 2022** (勾选 "C++ 桌面开发" 工作负载)
-
-### 从源码运行
 ```powershell
-# 1. 克隆或进入项目目录
-cd .\AtlasForge
-
-# 2. 安装前端依赖
-npm install
-
-# 3. 启动开发模式（将自动启动前端 Vite 与后端 Tauri 壳）
+git clone https://github.com/Hephaestus-DevKit/AtlasForge.git
+cd AtlasForge
+npm ci
 npm run tauri dev
 ```
 
-### 生产环境打包
+AI Provider 的密钥通过环境变量提供，例如 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `DEEPSEEK_API_KEY`；本地 Ollama 不需要云端密钥。应用设置中只保存变量名和非敏感连接参数。
+
+### 运行质量门禁
+
 ```powershell
-# 构建 Windows x64 平台安装包
-$env:RUSTUP_TOOLCHAIN="stable-x86_64-pc-windows-msvc"
-npm run tauri -- build --target x86_64-pc-windows-msvc
+# TypeScript、ESLint、前端测试、构建、Rust 测试和依赖审计
+npm run verify-dev
+
+# 额外运行 Playwright 浏览器测试
+npm run verify-dev -- -E2E
+
+# 发布前额外构建 Tauri bundle
+npm run verify-release -- -E2E -FullBuild
 ```
-构建出的安装程序将位于：`src-tauri/target/x86_64-pc-windows-msvc/release/bundle/`
 
----
+也可以分别执行 `npm run typecheck`、`npm run lint`、`npm test`、`npm run test:rust`、`npm run build` 和 `npm run test:e2e`。
 
-## 📂 架构设计与文档
+## 项目结构
 
-关于系统架构、数据库模型与 AI 智能体体系的详细设计，请参阅：
-* 📑 [产品定义与目标](docs/00-product-definition.md)
-* 📑 [核心架构与技术决策](docs/01-research-and-decisions.md)
-* 📑 [数据模型与知识索引体系](docs/03-domain-model-and-indexing.md)
-* 📑 [AI 任务与智能体系统设计](docs/04-agent-system.md)
-* 📑 [本地安全与权限控制设计](docs/06-security-and-permissions.md)
+```text
+AtlasForge/
+├─ src/                         React UI
+│  ├─ api/                     类型化 Tauri IPC 适配层
+│  ├─ components/              跨页面基础组件
+│  ├─ features/                按领域组织的功能组件
+│  ├─ pages/                   页面编排与状态连接
+│  ├─ types/                   前端共享领域类型
+│  └─ utils/                   无 UI 依赖的通用工具
+├─ src-tauri/
+│  ├─ src/                     Rust 可信核心与领域适配器
+│  ├─ migrations/              只追加的 SQLite schema 迁移
+│  ├─ capabilities/            Tauri 权限声明
+│  └─ tauri.conf.json          桌面构建配置
+├─ e2e/                        Playwright 浏览器验收
+├─ scripts/                    可重复的发布门禁
+├─ docs/                       产品、架构、安全和验收文档
+└─ .github/workflows/          Windows CI 与 GitHub Pages
+```
 
----
+分层原则：页面负责交互编排；`src/features` 承载领域 UI；`src/api` 是唯一前端 IPC 边界；Rust `commands` 只做命令编排，扫描器、索引器、验证器、GitHub、AI Provider、权限和工作区逻辑分别放在独立模块中。阻塞型文件系统、Git 和数据库任务不占用 Tauri 异步运行时。
 
-## ⚖️ 核心原则
+## 数据与维护
 
-1. **本地优先**：你的项目代码与核心索引永远保存在本地 SQLite 中，只有执行任务时才会将最小必要上下文发送给指定的 AI 接口。
-2. **可验证性**：AI 做出的任何代码修改与命令执行，必须留下明确的日志与哈希防篡改证据。
-3. **受控并发与可恢复任务**：SQLite 使用 WAL 与 5000ms 锁超时；扫描、索引、审计和 GitHub 同步在阻塞工作线程执行，任务状态持久化并保留审计记录。
+- SQLite 数据库位于 Tauri 应用数据目录，不写入源码仓库。
+- SQLite 使用 WAL 和 busy timeout；迁移前创建一致性备份，并在启动时执行完整性检查。
+- schema 迁移只追加，不修改已发布迁移。
+- 新增高风险能力时必须同时提供 preview、approval、audit 和 rollback strategy。
+- 代码行为变更应更新测试、[CHANGELOG](CHANGELOG.md) 和对应设计文档。
+
+## 设计文档
+
+- [产品定义](docs/00-product-definition.md)
+- [架构与技术决策](docs/01-research-and-decisions.md)
+- [系统架构](docs/02-system-architecture.md)
+- [领域模型与索引](docs/03-domain-model-and-indexing.md)
+- [任务与 Agent 系统](docs/04-agent-system.md)
+- [仓库维护引擎](docs/05-repo-maintenance-engine.md)
+- [安全与权限](docs/06-security-and-permissions.md)
+- [验证与质量门禁](docs/09-validation-and-quality-gates.md)
+- [Windows 原生验收](docs/11-windows-native-validation.md)
+- [能力矩阵](docs/13-capability-matrix.md)
+
+## 版本策略
+
+AtlasForge 在 `0.x` 阶段遵循快速演进语义：次版本可能调整内部 API、数据库实体和 UI 工作流，但已发布的迁移与安全边界保持向前兼容。发布记录见 [Releases](https://github.com/Hephaestus-DevKit/AtlasForge/releases) 和 [CHANGELOG](CHANGELOG.md)。

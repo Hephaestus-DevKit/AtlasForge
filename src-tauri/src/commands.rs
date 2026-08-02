@@ -1,7 +1,6 @@
 use crate::ai_fix;
 use crate::ai_provider;
 use crate::auditor;
-use crate::automations;
 use crate::db::Db;
 use crate::github;
 use crate::indexer;
@@ -10,9 +9,8 @@ use crate::models::*;
 use crate::permissions;
 use crate::profiler;
 use crate::scanner::{self, scan_root};
-use crate::security;
 use crate::tool_broker;
-use crate::verification;
+use crate::workspace;
 use std::sync::Arc;
 use tauri::State;
 
@@ -20,52 +18,6 @@ use tauri::State;
 pub struct AppState {
     pub db: Arc<Db>,
     pub jobs: Arc<job_engine::JobRuntime>,
-}
-
-const MAX_ROOT_GLOBS: usize = 128;
-const MAX_GLOB_LENGTH: usize = 512;
-
-fn validate_root_settings(input: &AddRootInput) -> Result<(), String> {
-    if !matches!(input.access_mode.as_str(), "read_only" | "read_write") {
-        return Err("Access mode must be 'read_only' or 'read_write'".into());
-    }
-
-    for (kind, patterns) in [
-        ("include", &input.include_globs),
-        ("exclude", &input.exclude_globs),
-    ] {
-        if patterns.len() > MAX_ROOT_GLOBS {
-            return Err(format!(
-                "Too many {} globs: maximum is {}",
-                kind, MAX_ROOT_GLOBS
-            ));
-        }
-        for pattern in patterns {
-            if pattern.trim().is_empty() {
-                return Err(format!("{} glob must not be empty", kind));
-            }
-            if pattern.len() > MAX_GLOB_LENGTH {
-                return Err(format!(
-                    "{} glob exceeds {} characters",
-                    kind, MAX_GLOB_LENGTH
-                ));
-            }
-            glob::Pattern::new(&pattern.replace('\\', "/"))
-                .map_err(|err| format!("Invalid {} glob '{}': {}", kind, pattern, err))?;
-        }
-    }
-    Ok(())
-}
-
-fn effective_exclude_globs(input: &AddRootInput) -> Vec<String> {
-    if input.exclude_globs.is_empty() {
-        security::DEFAULT_EXCLUDE_GLOBS
-            .iter()
-            .map(|pattern| pattern.to_string())
-            .collect()
-    } else {
-        input.exclude_globs.clone()
-    }
 }
 
 // --- Greeting (test IPC) ---
@@ -79,40 +31,7 @@ pub fn greet(name: &str) -> String {
 
 #[tauri::command]
 pub fn list_workspace_roots(state: State<AppState>) -> Result<Vec<WorkspaceRoot>, String> {
-    load_workspace_roots(&state.db)
-}
-
-fn load_workspace_roots(db: &Db) -> Result<Vec<WorkspaceRoot>, String> {
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT id, path, label, access_mode, scan_enabled, include_globs, exclude_globs, created_at, last_scanned_at FROM workspace_root ORDER BY created_at")
-        .map_err(|e| e.to_string())?;
-
-    let roots = stmt
-        .query_map([], |row| {
-            let include_globs_str: String = row.get(5)?;
-            let exclude_globs_str: String = row.get(6)?;
-            let include_globs: Vec<String> =
-                serde_json::from_str(&include_globs_str).unwrap_or_default();
-            let exclude_globs: Vec<String> =
-                serde_json::from_str(&exclude_globs_str).unwrap_or_default();
-            Ok(WorkspaceRoot {
-                id: row.get(0)?,
-                path: row.get(1)?,
-                label: row.get(2)?,
-                access_mode: row.get(3)?,
-                scan_enabled: row.get::<_, i32>(4)? != 0,
-                include_globs,
-                exclude_globs,
-                created_at: row.get(7)?,
-                last_scanned_at: row.get(8)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    Ok(roots)
+    workspace::load_workspace_roots(&state.db)
 }
 
 #[tauri::command]
@@ -120,7 +39,7 @@ pub fn add_workspace_root(
     state: State<AppState>,
     input: AddRootInput,
 ) -> Result<WorkspaceRoot, String> {
-    validate_root_settings(&input)?;
+    workspace::validate_root_settings(&input)?;
     let path = std::path::Path::new(&input.path);
     if !path.exists() {
         return Err(format!("Path does not exist: {}", input.path));
@@ -156,7 +75,7 @@ pub fn add_workspace_root(
 
     let id = uuid::Uuid::new_v4().to_string();
     let include_globs = input.include_globs.clone();
-    let exclude_globs = effective_exclude_globs(&input);
+    let exclude_globs = workspace::effective_exclude_globs(&input);
     let include_globs_json = serde_json::to_string(&include_globs).map_err(|e| e.to_string())?;
     let exclude_globs_json = serde_json::to_string(&exclude_globs).map_err(|e| e.to_string())?;
     let label = if input.label.is_empty() {
@@ -266,8 +185,8 @@ pub fn update_workspace_root(
     id: String,
     updates: AddRootInput,
 ) -> Result<WorkspaceRoot, String> {
-    validate_root_settings(&updates)?;
-    let exclude_globs = effective_exclude_globs(&updates);
+    workspace::validate_root_settings(&updates)?;
+    let exclude_globs = workspace::effective_exclude_globs(&updates);
     let include_globs_json =
         serde_json::to_string(&updates.include_globs).map_err(|e| e.to_string())?;
     let exclude_globs_json = serde_json::to_string(&exclude_globs).map_err(|e| e.to_string())?;
@@ -805,7 +724,7 @@ fn dispatch_queued_job(job: &Job, state: &AppState) -> Result<(), String> {
         "scan" => {
             let root_ids: Vec<String> =
                 serde_json::from_str(&job.input).map_err(|error| error.to_string())?;
-            let roots = load_workspace_roots(&state.db)?;
+            let roots = workspace::load_workspace_roots(&state.db)?;
             let targets = roots
                 .into_iter()
                 .filter(|root| root_ids.contains(&root.id))
@@ -832,12 +751,12 @@ fn dispatch_queued_job(job: &Job, state: &AppState) -> Result<(), String> {
         }
         "reindex" => {
             let repo_id = job_input_string(&job.input, "repoId")?;
-            let path = repository_path(&repo_id, &state.db)?;
+            let path = workspace::repository_path(&repo_id, &state.db)?;
             indexer::index_repo(&repo_id, &path, &state.db).map(|_| ())
         }
         "audit" => {
             let repo_id = job_input_string(&job.input, "repoId")?;
-            let path = repository_path(&repo_id, &state.db)?;
+            let path = workspace::repository_path(&repo_id, &state.db)?;
             auditor::audit_repo(&repo_id, &path, None, &state.db).map(|_| ())
         }
         "github_sync" => {
@@ -870,16 +789,6 @@ fn job_input_string(input: &str, key: &str) -> Result<String, String> {
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned)
         .ok_or_else(|| format!("Job input is missing '{}'", key))
-}
-
-fn repository_path(repo_id: &str, db: &Db) -> Result<String, String> {
-    let conn = db.conn.lock().map_err(|error| error.to_string())?;
-    conn.query_row(
-        "SELECT worktree_path FROM repository WHERE id = ?1",
-        rusqlite::params![repo_id],
-        |row| row.get(0),
-    )
-    .map_err(|error| format!("Repository not found: {}", error))
 }
 
 #[tauri::command]
@@ -971,15 +880,15 @@ pub async fn reindex_repo_cmd(
     repo_id: String,
 ) -> Result<indexer::IndexStats, String> {
     // Get worktree path
-    let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
-    let worktree_path: String = conn
-        .query_row(
+    let worktree_path: String = {
+        let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
             "SELECT worktree_path FROM repository WHERE id = ?1",
             rusqlite::params![repo_id],
             |row| row.get(0),
         )
-        .map_err(|e| format!("Repository not found: {}", e))?;
-    drop(conn);
+        .map_err(|e| format!("Repository not found: {}", e))?
+    };
 
     // Create a job
     let job_id = job_engine::create_job(
@@ -1056,15 +965,15 @@ pub async fn audit_repo_cmd(
     state: State<'_, AppState>,
     repo_id: String,
 ) -> Result<auditor::HealthSnapshot, String> {
-    let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
-    let worktree_path: String = conn
-        .query_row(
+    let worktree_path: String = {
+        let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
             "SELECT worktree_path FROM repository WHERE id = ?1",
             rusqlite::params![repo_id],
             |row| row.get(0),
         )
-        .map_err(|e| format!("Repository not found: {}", e))?;
-    drop(conn);
+        .map_err(|e| format!("Repository not found: {}", e))?
+    };
 
     // Create a job
     let job_id = job_engine::create_job(
@@ -1378,773 +1287,9 @@ pub fn preview_fix_plan_context_cmd(
     ai_fix::preview_fix_plan_context(&repo_id, &snapshot_id, &state.db)
 }
 
-// --- GitHub commands ---
-
-#[tauri::command]
-pub fn check_gh_auth_cmd() -> Result<github::GhAuthStatus, String> {
-    github::check_gh_auth()
-}
-
-#[tauri::command]
-pub fn resolve_github_repo_cmd(
-    state: State<AppState>,
-    repo_id: String,
-) -> Result<github::GitHubIntegration, String> {
-    let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
-    let worktree_path: String = conn
-        .query_row(
-            "SELECT worktree_path FROM repository WHERE id = ?1",
-            rusqlite::params![repo_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Repository not found: {}", e))?;
-    drop(conn);
-
-    let integration = github::resolve_github_repo(&repo_id, &worktree_path, &state.db)?;
-
-    write_audit(
-        &state,
-        "resolve_github",
-        &repo_id,
-        &worktree_path,
-        "github.read",
-        "none",
-        &format!(
-            "Resolved GitHub: {}/{}",
-            integration.github_owner, integration.github_repo
-        ),
-    )?;
-
-    Ok(integration)
-}
-
-#[tauri::command]
-pub fn get_github_evidence_cmd(
-    state: State<AppState>,
-    repo_id: String,
-) -> Result<github::GitHubEvidence, String> {
-    github::load_evidence(&repo_id, &state.db)
-}
-
-#[tauri::command]
-pub fn get_github_integration_cmd(
-    state: State<AppState>,
-    repo_id: String,
-) -> Result<Option<github::GitHubIntegration>, String> {
-    github::load_integration(&repo_id, &state.db)
-}
-
-#[tauri::command]
-pub async fn sync_github_cmd(
-    state: State<'_, AppState>,
-    repo_id: String,
-) -> Result<serde_json::Value, String> {
-    let integration = github::load_integration(&repo_id, &state.db)?
-        .ok_or_else(|| "No GitHub integration found. Run resolve_github_repo first.".to_string())?;
-
-    // Create a job
-    let job_id = job_engine::create_job(
-        "github_sync",
-        &serde_json::json!({"repoId": repo_id}).to_string(),
-        &state.db,
-    )?;
-    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
-
-    job_engine::append_job_event(
-        &job_id,
-        "github_sync_started",
-        &serde_json::json!({"repoId": repo_id}).to_string(),
-        &state.db,
-    )?;
-
-    let integration_for_sync = integration.clone();
-    let db_for_sync = state.db.clone();
-    let cancellation_for_sync = cancellation.clone();
-    let sync_result = tauri::async_runtime::spawn_blocking(move || {
-        let workflows = github::sync_workflow_runs(&integration_for_sync, &db_for_sync)?;
-        if cancellation_for_sync.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err("GitHub sync cancelled by user".into());
-        }
-        let prs = github::sync_prs(&integration_for_sync, &db_for_sync)?;
-        if cancellation_for_sync.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err("GitHub sync cancelled by user".into());
-        }
-        let releases = github::sync_releases(&integration_for_sync, &db_for_sync)?;
-        Ok::<_, String>((workflows.len(), prs.len(), releases.len()))
-    })
-    .await
-    .unwrap_or_else(|e| Err(format!("GitHub sync worker failed: {}", e)));
-
-    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
-        state.jobs.finish(&job_id);
-        return Err("GitHub sync cancelled by user".into());
-    }
-
-    match sync_result {
-        Ok((wf_count, pr_count, rel_count)) => {
-            github::set_sync_errors(&integration.id, &[], &state.db)?;
-            job_engine::complete_job(&job_id, &state.db)?;
-            state.jobs.finish(&job_id);
-            job_engine::append_job_event(
-                &job_id,
-                "github_sync_completed",
-                &serde_json::json!({"workflows": wf_count, "prs": pr_count, "releases": rel_count})
-                    .to_string(),
-                &state.db,
-            )?;
-
-            write_audit(
-                &state,
-                "sync_github",
-                &repo_id,
-                &format!("{}/{}", integration.github_owner, integration.github_repo),
-                "github.read",
-                "low",
-                &format!(
-                    "Synced {} workflows, {} PRs, {} releases",
-                    wf_count, pr_count, rel_count
-                ),
-            )?;
-
-            Ok(serde_json::json!({
-                "workflows": wf_count,
-                "prs": pr_count,
-                "releases": rel_count,
-            }))
-        }
-        Err(e) => {
-            let _ = github::set_sync_errors(&integration.id, std::slice::from_ref(&e), &state.db);
-            job_engine::fail_job(&job_id, &e, &state.db)?;
-            state.jobs.finish(&job_id);
-            Err(e)
-        }
-    }
-}
-
-#[tauri::command]
-pub fn create_pr_cmd(
-    state: State<AppState>,
-    repo_id: String,
-    title: String,
-    body: String,
-    head: String,
-    base: String,
-    draft: Option<bool>,
-) -> Result<github::GitHubPR, String> {
-    ensure_github_write_enabled()?;
-    let integration = github::load_integration(&repo_id, &state.db)?
-        .ok_or_else(|| "No GitHub integration found".to_string())?;
-
-    let pr = github::create_pr(
-        &integration,
-        &title,
-        &body,
-        &head,
-        &base,
-        draft.unwrap_or(false),
-    )?;
-
-    write_audit(
-        &state,
-        "create_pr",
-        &repo_id,
-        &format!("pr:{}", pr.pr_number),
-        "github.create_pr",
-        "high",
-        &format!("Created PR #{}: {}", pr.pr_number, title),
-    )?;
-
-    Ok(pr)
-}
-
-#[tauri::command]
-pub fn create_release_cmd(
-    state: State<AppState>,
-    repo_id: String,
-    tag: String,
-    name: String,
-    body: String,
-    draft: Option<bool>,
-    prerelease: Option<bool>,
-) -> Result<github::GitHubRelease, String> {
-    ensure_github_write_enabled()?;
-    let integration = github::load_integration(&repo_id, &state.db)?
-        .ok_or_else(|| "No GitHub integration found".to_string())?;
-
-    let release = github::create_release(
-        &integration,
-        &tag,
-        &name,
-        &body,
-        draft.unwrap_or(false),
-        prerelease.unwrap_or(false),
-    )?;
-
-    write_audit(
-        &state,
-        "create_release",
-        &repo_id,
-        &tag,
-        "github.create_release",
-        "critical",
-        &format!("Created release: {}", tag),
-    )?;
-
-    Ok(release)
-}
-
-#[tauri::command]
-pub fn rerun_workflow_cmd(
-    state: State<AppState>,
-    repo_id: String,
-    run_id: String,
-) -> Result<(), String> {
-    ensure_github_write_enabled()?;
-    let integration = github::load_integration(&repo_id, &state.db)?
-        .ok_or_else(|| "No GitHub integration found".to_string())?;
-
-    github::rerun_workflow(&integration, &run_id)?;
-
-    write_audit(
-        &state,
-        "rerun_workflow",
-        &repo_id,
-        &run_id,
-        "github.write",
-        "medium",
-        &format!("Reran workflow: {}", run_id),
-    )?;
-
-    Ok(())
-}
-
-// --- Verification commands ---
-
-#[tauri::command]
-pub fn detect_commands_cmd(
-    state: State<AppState>,
-    worktree_path: String,
-) -> Result<Vec<verification::VerificationCommand>, String> {
-    let roots = list_workspace_roots(state)?;
-    let path = std::path::Path::new(&worktree_path);
-    security::authorize_path(path, &roots).ok_or_else(|| {
-        format!(
-            "Path is not within any authorized workspace root: {}",
-            worktree_path
-        )
-    })?;
-    Ok(verification::detect_commands(&worktree_path))
-}
-
-/// Resolve a worktree_path to a repo_id. Returns (repo_id, worktree_path).
-fn resolve_repo_id(
-    state: &State<AppState>,
-    worktree_or_repo_id: &str,
-) -> Result<(String, String), String> {
-    let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
-    // Try as repo_id first
-    let mut stmt = conn
-        .prepare("SELECT id, worktree_path FROM repository WHERE id = ?1")
-        .map_err(|e| e.to_string())?;
-    let mut rows = stmt
-        .query(rusqlite::params![worktree_or_repo_id])
-        .map_err(|e| e.to_string())?;
-    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let id: String = row.get(0).map_err(|e| e.to_string())?;
-        let wt: String = row.get(1).map_err(|e| e.to_string())?;
-        return Ok((id, wt));
-    }
-    drop(rows);
-    drop(stmt);
-
-    // Try as worktree_path
-    let mut stmt = conn
-        .prepare("SELECT id, worktree_path FROM repository WHERE worktree_path = ?1")
-        .map_err(|e| e.to_string())?;
-    let mut rows = stmt
-        .query(rusqlite::params![worktree_or_repo_id])
-        .map_err(|e| e.to_string())?;
-    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let id: String = row.get(0).map_err(|e| e.to_string())?;
-        let wt: String = row.get(1).map_err(|e| e.to_string())?;
-        return Ok((id, wt));
-    }
-
-    Err(format!(
-        "No repository found for id or path: {}",
-        worktree_or_repo_id
-    ))
-}
-
-fn resolve_verification_repo(
-    state: &State<AppState>,
-    cwd: &str,
-    repo_id: Option<&str>,
-) -> Result<Option<String>, String> {
-    if let Some(repo_id) = repo_id {
-        let (resolved_id, worktree_path) = resolve_repo_id(state, repo_id)?;
-        if !security::same_path(
-            std::path::Path::new(cwd),
-            std::path::Path::new(&worktree_path),
-        ) {
-            return Err(format!(
-                "Repository '{}' does not match verification directory '{}'",
-                resolved_id, cwd
-            ));
-        }
-        return Ok(Some(resolved_id));
-    }
-
-    let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT id, worktree_path FROM repository")
-        .map_err(|e| e.to_string())?;
-    let repositories = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    Ok(repositories
-        .into_iter()
-        .find(|(_, worktree_path)| {
-            security::same_path(
-                std::path::Path::new(cwd),
-                std::path::Path::new(worktree_path),
-            )
-        })
-        .map(|(id, _)| id))
-}
-
-#[tauri::command]
-pub async fn run_verification_cmd(
-    state: State<'_, AppState>,
-    command: String,
-    cwd: String,
-    repo_id: Option<String>,
-    approval_id: String,
-) -> Result<verification::VerificationResult, String> {
-    let roots = list_workspace_roots(state.clone())?;
-    let cwd_path = std::path::Path::new(&cwd);
-    security::authorize_path(cwd_path, &roots).ok_or_else(|| {
-        format!(
-            "Working directory is not within any authorized workspace root: {}",
-            cwd
-        )
-    })?;
-
-    if !cwd_path.is_dir() {
-        return Err(format!(
-            "Verification directory is not a directory: {}",
-            cwd
-        ));
-    }
-
-    let command_meta = verification::resolve_command(&cwd, &command)?;
-    let resolved_repo_id = resolve_verification_repo(&state, &cwd, repo_id.as_deref())?;
-    let resolved_repo_id = resolved_repo_id
-        .ok_or_else(|| "Verification requires a registered repository".to_string())?;
-    let context_hash = permissions::verification_context_hash(&cwd, &command_meta)?;
-    permissions::consume_request(
-        &approval_id,
-        "shell.verify",
-        Some(&resolved_repo_id),
-        &context_hash,
-        &state.db,
-    )?;
-
-    // Create a job
-    let job_id = job_engine::create_job(
-        "verification",
-        &serde_json::json!({"command": command, "cwd": cwd}).to_string(),
-        &state.db,
-    )?;
-    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
-
-    job_engine::append_job_event(
-        &job_id,
-        "verification_started",
-        &serde_json::json!({"command": command, "cwd": cwd}).to_string(),
-        &state.db,
-    )?;
-
-    let category = command_meta.category.as_str();
-    let risk_level = command_meta.risk_level.as_str();
-    let result = verification::run_verification_with_control(
-        &command_meta.command,
-        &cwd,
-        command_meta.timeout_secs,
-        cancellation,
-    );
-    let summary = verification::summarize_output(&result);
-
-    if result.success {
-        job_engine::complete_job(&job_id, &state.db)?;
-        job_engine::append_job_event(&job_id, "verification_completed",
-            &serde_json::json!({"success": true, "durationMs": result.duration_ms, "summary": summary}).to_string(), &state.db)?;
-    } else {
-        let error_msg = format!(
-            "Command '{}' failed (exit code: {})",
-            command,
-            result.exit_code.map_or("N/A".into(), |c| c.to_string())
-        );
-        job_engine::fail_job(&job_id, &error_msg, &state.db)?;
-        job_engine::append_job_event(&job_id, "verification_failed",
-            &serde_json::json!({"success": false, "exitCode": result.exit_code, "durationMs": result.duration_ms, "summary": summary}).to_string(), &state.db)?;
-    }
-    state.jobs.finish(&job_id);
-
-    // Persist verification_run record
-    {
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let stdout_tail = verification::tail_truncate(&result.stdout, 4000);
-        let stderr_tail = verification::tail_truncate(&result.stderr, 4000);
-        let now2 = chrono::Utc::now().to_rfc3339();
-        let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO verification_run (id, repo_id, job_id, command, cwd, category, risk_level, success, exit_code, duration_ms, timed_out, stdout_tail, stderr_tail, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            rusqlite::params![
-                run_id,
-                &resolved_repo_id,
-                job_id,
-                command,
-                cwd,
-                category,
-                risk_level,
-                result.success as i32,
-                result.exit_code,
-                result.duration_ms as i64,
-                result.timed_out as i32,
-                stdout_tail,
-                stderr_tail,
-                now2,
-            ],
-        ).map_err(|e| e.to_string())?;
-    }
-
-    write_audit(
-        &state,
-        "run_verification",
-        &job_id,
-        &cwd,
-        "fs.read",
-        risk_level,
-        &format!(
-            "Ran verification: {} ({})",
-            command,
-            if result.success { "passed" } else { "failed" }
-        ),
-    )?;
-
-    Ok(result)
-}
-
-/// Run multiple verification commands sequentially.
-#[tauri::command]
-pub async fn run_batch_verification_cmd(
-    state: State<'_, AppState>,
-    command_names: Vec<String>,
-    cwd: String,
-    repo_id: Option<String>,
-    approval_ids: Vec<String>,
-) -> Result<Vec<verification::VerificationResult>, String> {
-    let roots = list_workspace_roots(state.clone())?;
-    let cwd_path = std::path::Path::new(&cwd);
-    security::authorize_path(cwd_path, &roots).ok_or_else(|| {
-        format!(
-            "Working directory is not within any authorized workspace root: {}",
-            cwd
-        )
-    })?;
-
-    if !cwd_path.is_dir() {
-        return Err(format!(
-            "Verification directory is not a directory: {}",
-            cwd
-        ));
-    }
-    if command_names.is_empty() {
-        return Err("No verification commands were selected".into());
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    let mut commands = Vec::with_capacity(command_names.len());
-    for command in command_names {
-        if !seen.insert(command.clone()) {
-            return Err(format!("Duplicate verification command: {}", command));
-        }
-        let resolved = verification::resolve_command(&cwd, &command)?;
-        commands.push(resolved);
-    }
-
-    let resolved_repo_id = resolve_verification_repo(&state, &cwd, repo_id.as_deref())?;
-    let resolved_repo_id = resolved_repo_id
-        .ok_or_else(|| "Batch verification requires a registered repository".to_string())?;
-    if approval_ids.len() != commands.len() {
-        return Err("Each verification command requires its own approval".into());
-    }
-    for (command, approval_id) in commands.iter().zip(&approval_ids) {
-        let context_hash = permissions::verification_context_hash(&cwd, command)?;
-        permissions::consume_request(
-            approval_id,
-            "shell.verify",
-            Some(&resolved_repo_id),
-            &context_hash,
-            &state.db,
-        )?;
-    }
-    let job_id = job_engine::create_job(
-        "verification_batch",
-        &serde_json::json!({
-            "commands": commands.iter().map(|cmd| &cmd.command).collect::<Vec<_>>(),
-            "cwd": cwd,
-        })
-        .to_string(),
-        &state.db,
-    )?;
-    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
-    job_engine::update_progress(&job_id, 0, commands.len() as i32, &state.db)?;
-    job_engine::append_job_event(
-        &job_id,
-        "verification_batch_started",
-        &serde_json::json!({"commandCount": commands.len(), "cwd": cwd}).to_string(),
-        &state.db,
-    )?;
-
-    let mut results = Vec::new();
-
-    for (index, cmd) in commands.iter().enumerate() {
-        if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
-            break;
-        }
-        let result = verification::run_verification_with_control(
-            &cmd.command,
-            &cwd,
-            cmd.timeout_secs,
-            cancellation.clone(),
-        );
-        results.push(result.clone());
-
-        // Persist each run
-        {
-            let run_id = uuid::Uuid::new_v4().to_string();
-            let stdout_tail = verification::tail_truncate(&result.stdout, 4000);
-            let stderr_tail = verification::tail_truncate(&result.stderr, 4000);
-            let now = chrono::Utc::now().to_rfc3339();
-            let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
-            conn.execute(
-                "INSERT INTO verification_run (id, repo_id, job_id, command, cwd, category, risk_level, success, exit_code, duration_ms, timed_out, stdout_tail, stderr_tail, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-                rusqlite::params![
-                    run_id,
-                    &resolved_repo_id,
-                    job_id,
-                    cmd.command,
-                    cwd,
-                    cmd.category,
-                    cmd.risk_level,
-                    result.success as i32,
-                    result.exit_code,
-                    result.duration_ms as i64,
-                    result.timed_out as i32,
-                    stdout_tail,
-                    stderr_tail,
-                    now,
-                ],
-            ).map_err(|e| e.to_string())?;
-        }
-
-        write_audit(
-            &state,
-            "run_verification",
-            &cmd.command,
-            &cwd,
-            "fs.read",
-            &cmd.risk_level,
-            &format!(
-                "Ran verification: {} ({})",
-                cmd.command,
-                if result.success { "passed" } else { "failed" }
-            ),
-        )?;
-        job_engine::update_progress(
-            &job_id,
-            (index + 1) as i32,
-            commands.len() as i32,
-            &state.db,
-        )?;
-    }
-
-    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
-        state.jobs.finish(&job_id);
-        return Ok(results);
-    }
-    let failed_count = results.iter().filter(|result| !result.success).count();
-    if failed_count == 0 {
-        job_engine::complete_job(&job_id, &state.db)?;
-        job_engine::append_job_event(
-            &job_id,
-            "verification_batch_completed",
-            &serde_json::json!({"commandCount": results.len()}).to_string(),
-            &state.db,
-        )?;
-    } else {
-        let error = format!(
-            "{} of {} verification commands failed",
-            failed_count,
-            results.len()
-        );
-        job_engine::fail_job(&job_id, &error, &state.db)?;
-        job_engine::append_job_event(
-            &job_id,
-            "verification_batch_failed",
-            &serde_json::json!({
-                "commandCount": results.len(),
-                "failedCount": failed_count,
-            })
-            .to_string(),
-            &state.db,
-        )?;
-    }
-    state.jobs.finish(&job_id);
-
-    Ok(results)
-}
-
-/// List stored verification runs for a repo.
-#[tauri::command]
-pub fn list_verification_runs_cmd(
-    state: State<AppState>,
-    repo_id: String,
-    limit: Option<i64>,
-) -> Result<Vec<verification::VerificationRun>, String> {
-    let limit = limit.unwrap_or(50).clamp(1, 500);
-    let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare(
-        "SELECT id, repo_id, job_id, command, cwd, category, risk_level, success, exit_code, duration_ms, timed_out, stdout_tail, stderr_tail, created_at FROM verification_run WHERE repo_id = ?1 ORDER BY created_at DESC LIMIT ?2"
-    ).map_err(|e| e.to_string())?;
-    let runs = stmt
-        .query_map(rusqlite::params![repo_id, limit], |row| {
-            Ok(verification::VerificationRun {
-                id: row.get(0)?,
-                repo_id: row.get(1)?,
-                job_id: row.get(2)?,
-                command: row.get(3)?,
-                cwd: row.get(4)?,
-                category: row.get(5)?,
-                risk_level: row.get(6)?,
-                success: row.get::<_, i32>(7)? != 0,
-                exit_code: row.get(8)?,
-                duration_ms: row.get::<_, i64>(9)? as u64,
-                timed_out: row.get::<_, i32>(10)? != 0,
-                stdout_tail: row.get(11)?,
-                stderr_tail: row.get(12)?,
-                created_at: row.get(13)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    Ok(runs)
-}
-
-// --- Automation commands ---
-
-#[tauri::command]
-pub fn list_automation_rules_cmd(
-    state: State<AppState>,
-) -> Result<Vec<automations::AutomationRule>, String> {
-    automations::list_rules(&state.db)
-}
-
-#[tauri::command]
-pub fn create_automation_rule_cmd(
-    state: State<AppState>,
-    rule: automations::AutomationRule,
-) -> Result<(), String> {
-    automations::create_rule(&rule, &state.db)?;
-
-    write_audit(
-        &state,
-        "create_automation_rule",
-        &rule.id,
-        &rule.name,
-        "automation",
-        "low",
-        &format!(
-            "Created rule: {} (trigger: {}, action: {})",
-            rule.name, rule.trigger_type, rule.action_type
-        ),
-    )?;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn update_automation_rule_cmd(
-    state: State<AppState>,
-    rule: automations::AutomationRule,
-) -> Result<(), String> {
-    automations::update_rule(&rule, &state.db)
-}
-
-#[tauri::command]
-pub fn delete_automation_rule_cmd(state: State<AppState>, id: String) -> Result<(), String> {
-    automations::delete_rule(&id, &state.db)?;
-
-    write_audit(
-        &state,
-        "delete_automation_rule",
-        &id,
-        "system",
-        "automation",
-        "low",
-        &format!("Deleted rule: {}", id),
-    )?;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn list_notifications_cmd(
-    state: State<AppState>,
-    unread_only: Option<bool>,
-    limit: Option<i64>,
-) -> Result<Vec<automations::Notification>, String> {
-    automations::list_notifications(
-        unread_only.unwrap_or(false),
-        limit.unwrap_or(50).clamp(1, 500),
-        &state.db,
-    )
-}
-
-#[tauri::command]
-pub fn mark_notification_read_cmd(state: State<AppState>, id: String) -> Result<(), String> {
-    automations::mark_notification_read(&id, &state.db)
-}
-
-#[tauri::command]
-pub fn mark_all_notifications_read_cmd(state: State<AppState>) -> Result<usize, String> {
-    automations::mark_all_notifications_read(&state.db)
-}
-
-#[tauri::command]
-pub fn tick_scheduler_cmd(state: State<AppState>) -> Result<Vec<String>, String> {
-    let triggered = automations::tick_scheduler(&state.db)?;
-
-    write_audit(
-        &state,
-        "tick_scheduler",
-        "scheduler",
-        "automation",
-        "automation",
-        "low",
-        &format!("Scheduler tick triggered {} rule(s)", triggered.len()),
-    )?;
-
-    Ok(triggered)
-}
+pub mod automation_commands;
+pub mod github_commands;
+pub mod verification_commands;
 
 // --- Scan Error commands ---
 
@@ -2182,35 +1327,4 @@ fn ensure_github_write_enabled() -> Result<(), String> {
         "GitHub write operations remain disabled until their dedicated preview and approval UI is implemented."
             .into(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn root_input(access_mode: &str, include_globs: Vec<String>) -> AddRootInput {
-        AddRootInput {
-            path: "C:/workspace".into(),
-            label: "Workspace".into(),
-            access_mode: access_mode.into(),
-            scan_enabled: true,
-            include_globs,
-            exclude_globs: vec!["node_modules".into()],
-        }
-    }
-
-    #[test]
-    fn workspace_settings_reject_invalid_modes_and_globs() {
-        assert!(validate_root_settings(&root_input("admin", vec![])).is_err());
-        assert!(validate_root_settings(&root_input(
-            "read_only",
-            vec!["[unterminated".into()]
-        ))
-        .is_err());
-        assert!(validate_root_settings(&root_input(
-            "read_write",
-            vec!["clients/**".into()]
-        ))
-        .is_ok());
-    }
 }

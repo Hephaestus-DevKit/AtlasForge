@@ -9,7 +9,28 @@ AtlasForge 必须同时满足：
 - 能像知识库一样索引文档、代码、日志和历史经验。
 - 能像 AI agent runtime 一样调度模型和工具。
 
-因此采用分层架构，而不是单一聊天应用。
+因此采用分层架构，而不是单一聊天应用。下文同时描述长期边界和 0.1.0
+已经落地的薄闭环；规划能力是否可用以 `13-capability-matrix.md` 为准。
+
+## 0.1.0 代码边界
+
+```text
+src/pages              页面状态与工作流编排
+    -> src/features    领域 UI 与可复用交互
+    -> src/api/ipc     唯一前端 IPC 边界
+        -> commands    Tauri 命令参数校验与领域编排
+            -> Rust domain modules
+               workspace / scanner / profiler / indexer / auditor
+               permissions / verification / ai_provider / ai_fix
+               github / job_engine / automations / tool_broker
+            -> db + append-only migrations
+```
+
+- UI 不直接持有文件系统、Shell、Git 或 GitHub mutation 权限。
+- `commands.rs` 是适配和编排层；可独立测试的校验、查询和领域行为放入专用模块。
+- 页面不继续堆积领域子视图；大型交互按 `src/features/<domain>` 拆分。
+- 扫描、索引、审计和 GitHub 同步中的阻塞工作在 Tauri blocking worker 上运行。
+- Rust 领域适配器是 0.1.0 的实际 service layer；当前没有额外 TypeScript worker 或 Python 核心运行时。
 
 ## 总体结构
 
@@ -31,7 +52,7 @@ AtlasForge 必须同时满足：
         │             │               │               │
 ┌───────▼──────┐ ┌────▼─────┐ ┌───────▼──────┐ ┌──────▼──────┐
 │ Local Store  │ │ Search   │ │ Tool Adapters │ │ AI Providers│
-│ SQLite       │ │ FTS/Vec  │ │ git/gh/fs/web │ │ OpenAI/Ollama│
+│ SQLite       │ │ FTS5     │ │ git/gh/fs     │ │ OpenAI/Ollama│
 └──────────────┘ └──────────┘ └──────────────┘ └─────────────┘
 ```
 
@@ -80,11 +101,11 @@ AtlasForge 必须同时满足：
 - 运行验证。
 - 处理长任务队列。
 
-建议技术：
+当前实现：
 
-- 第一版可用 TypeScript worker，降低开发速度成本。
-- Rust 后续可接管性能敏感部分，例如文件扫描、watcher、压缩、加密。
-- Python 只作为可选工具运行时，用于文档、PDF、ML 或数据处理，不作为核心必需项。
+- 文件扫描、画像、索引、审计、Git/GitHub 和验证均由 Rust 模块执行。
+- 长任务状态持久化到 SQLite；阻塞操作不在前端状态或 Tauri 异步线程中长期运行。
+- Python 只保留为未来可选工具运行时，不是核心依赖。
 
 ## 模块分解
 
@@ -125,7 +146,7 @@ AtlasForge 必须同时满足：
 职责：
 
 - 把文件、README、配置、任务日志、审查报告转成可检索 document。
-- 做 chunk、metadata、FTS、embedding。
+- 0.1.0 执行 chunk、metadata 和 SQLite FTS5；embedding/vector 是后续保留点。
 - 维护索引版本和重建队列。
 - 支持按 root/repo/project/scope 查询。
 
@@ -138,9 +159,8 @@ discover files
   -> normalize
   -> chunk
   -> write metadata
-  -> update FTS
-  -> enqueue embedding
-  -> vector index upsert
+  -> update FTS5
+  -> (future) enqueue embedding/vector upsert
 ```
 
 ### 4. AI Orchestrator
@@ -174,10 +194,16 @@ discover files
 - 输出裁剪和脱敏。
 - rollback hook。
 
-工具类型：
+0.1.0 已注册工具：
 
-- Filesystem：read/list/stat/write/patch/move/delete。
-- Git：status/diff/branch/commit/push/tag。
+- Filesystem：`fs.list`、`fs.read`。
+- Git：`git.status`、`git.diff`。
+- Shell：`shell.verify`，复用批准和隔离验证边界。
+
+以下是扩展类型，不代表当前已开放：
+
+- Filesystem：stat/write/patch/move/delete。
+- Git：branch/commit/push/tag。
 - GitHub：repo/pr/issues/actions/releases/pages。
 - Shell：受控命令执行。
 - Browser：网页打开、截图、DOM 检查。
@@ -277,7 +303,7 @@ completed -> archived
 
 ## 打包和分发
 
-第一版先支持 Windows 本机开发和手动安装。后续：
+0.1.0 先支持 Windows 本机源码运行和源码发布。后续：
 
 - Tauri installer。
 - GitHub Release。
