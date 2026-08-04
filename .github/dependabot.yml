@@ -7,6 +7,13 @@ updates:
     groups:
       frontend-patches:
         update-types: [patch, minor]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+      # 0.x minor releases can be breaking; keep this plugin aligned with the
+      # current ESLint 8 toolchain until the lint stack is upgraded together.
+      - dependency-name: eslint-plugin-react-refresh
+        update-types: [version-update:semver-minor]
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
@@ -14,6 +21,9 @@ updates:
     groups:
       rust-patches:
         update-types: [patch, minor]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule:
