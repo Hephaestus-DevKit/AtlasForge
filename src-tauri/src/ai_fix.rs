@@ -102,6 +102,7 @@ pub fn create_patch_proposal(proposal: &PatchProposal, db: &Db) -> Result<(), St
 }
 
 /// Approve and apply a patch proposal.
+#[cfg(test)]
 pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> {
     let cancellation = std::sync::atomic::AtomicBool::new(false);
     apply_patch_cancellable(proposal_id, db, &cancellation)
@@ -357,6 +358,7 @@ pub fn reject_patch(proposal_id: &str, reason: &str, db: &Db) -> Result<(), Stri
 }
 
 /// Roll back an applied patch.
+#[cfg(test)]
 pub fn rollback_patch(proposal_id: &str, db: &Db) -> Result<(), String> {
     let cancellation = std::sync::atomic::AtomicBool::new(false);
     rollback_patch_cancellable(proposal_id, db, &cancellation)
@@ -473,14 +475,15 @@ pub fn rollback_patch_cancellable(
 /// final database transaction. Recovery only changes state when the current
 /// file hash exactly matches a stored baseline or isolated applied hash.
 pub fn recover_interrupted_patch_operations(db: &Db) -> Result<usize, String> {
-    let candidates: Vec<(
+    type RecoveryCandidate = (
         String,
         String,
         String,
         String,
         Option<String>,
         Option<String>,
-    )> = {
+    );
+    let candidates: Vec<RecoveryCandidate> = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(

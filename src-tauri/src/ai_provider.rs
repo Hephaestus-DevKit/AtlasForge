@@ -515,7 +515,7 @@ pub async fn probe_provider(provider: &AiProvider) -> ProviderProbe {
             }
             "anthropic" => {
                 let response = http_client()?
-                    .get(format!("{}", provider.base_url.trim_end_matches('/')))
+                    .get(provider.base_url.trim_end_matches('/').to_string())
                     .send()
                     .await;
                 match response {

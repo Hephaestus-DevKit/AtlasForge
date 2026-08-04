@@ -58,10 +58,8 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
             })
             .map_err(|e| e.to_string())?;
         let mut map = std::collections::HashMap::new();
-        for row in rows {
-            if let Ok((path, doc)) = row {
-                map.insert(path, doc);
-            }
+        for (path, doc) in rows.flatten() {
+            map.insert(path, doc);
         }
         map
     };

@@ -247,6 +247,7 @@ pub fn resolve_command(
         })
 }
 
+#[cfg(test)]
 pub fn ensure_automatic_command_allowed(command: &VerificationCommand) -> Result<(), String> {
     if command.requires_approval {
         return Err(format!(

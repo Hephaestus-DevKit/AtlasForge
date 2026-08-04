@@ -167,7 +167,14 @@ pub fn run_default(
     args: &[&str],
     cwd: Option<&Path>,
 ) -> Result<ProcessOutput, String> {
-    run(program, args, cwd, DEFAULT_TIMEOUT, DEFAULT_OUTPUT_LIMIT)
+    let output = run(program, args, cwd, DEFAULT_TIMEOUT, DEFAULT_OUTPUT_LIMIT)?;
+    if output.truncated {
+        return Err(format!(
+            "{program} output exceeded the {} byte capture limit",
+            DEFAULT_OUTPUT_LIMIT
+        ));
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
