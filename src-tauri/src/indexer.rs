@@ -24,7 +24,9 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
     }
 
     let mut stats = IndexStats::default();
-    let files = collect_indexable_files(root);
+    let roots = crate::workspace::load_workspace_roots(db)?;
+    let policy_root = crate::security::authorize_read(root, &roots)?;
+    let files = collect_indexable_files(root, Some(policy_root));
     let current_paths: HashSet<String> =
         files.iter().map(|(relative, _)| relative.clone()).collect();
 
@@ -471,11 +473,15 @@ const INDEXABLE_EXTENSIONS: &[&str] = &[
 ];
 
 fn should_index(path: &Path) -> bool {
+    if crate::security::is_sensitive_path(path) {
+        return false;
+    }
     // Check directory components
     for component in path.components() {
         if let std::path::Component::Normal(os_str) = component {
             if let Some(s) = os_str.to_str() {
-                if EXCLUDED_DIRS.contains(&s) {
+                let normalized = s.to_lowercase();
+                if EXCLUDED_DIRS.contains(&normalized.as_str()) {
                     return false;
                 }
             }
@@ -539,7 +545,10 @@ fn should_index(path: &Path) -> bool {
     }
 }
 
-fn collect_indexable_files(root: &Path) -> Vec<(String, String)> {
+fn collect_indexable_files(
+    root: &Path,
+    policy_root: Option<&crate::models::WorkspaceRoot>,
+) -> Vec<(String, String)> {
     let mut result = Vec::new();
     let mut visited = HashSet::new();
 
@@ -551,11 +560,17 @@ fn collect_indexable_files(root: &Path) -> Vec<(String, String)> {
             if path == root {
                 return true;
             }
+            if crate::security::is_sensitive_path(path)
+                || policy_root.is_some_and(|policy| crate::security::is_excluded(path, policy))
+            {
+                return false;
+            }
             if path.is_dir() {
                 for component in path.components() {
                     if let std::path::Component::Normal(os_str) = component {
                         if let Some(s) = os_str.to_str() {
-                            if EXCLUDED_DIRS.contains(&s) {
+                            let normalized = s.to_lowercase();
+                            if EXCLUDED_DIRS.contains(&normalized.as_str()) {
                                 return false;
                             }
                         }

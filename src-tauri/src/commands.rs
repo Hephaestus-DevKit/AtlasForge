@@ -215,7 +215,7 @@ pub fn update_workspace_root(
 pub fn list_repositories(state: State<AppState>) -> Result<Vec<Repository>, String> {
     let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, asset_id, worktree_path, git_dir_path, is_bare, is_worktree, default_branch, current_branch, head_sha, remote_origin_url, dirty_state, ahead_behind, last_commit_at FROM repository ORDER BY worktree_path")
+        .prepare("SELECT r.id, r.asset_id, r.worktree_path, r.git_dir_path, r.is_bare, r.is_worktree, r.default_branch, r.current_branch, r.head_sha, r.remote_origin_url, r.dirty_state, r.ahead_behind, r.last_commit_at FROM repository r JOIN project_asset a ON a.id = r.asset_id WHERE a.is_available = 1 ORDER BY r.worktree_path")
         .map_err(|e| e.to_string())?;
 
     let repos = stmt
@@ -263,6 +263,7 @@ pub fn list_repository_summaries(state: State<AppState>) -> Result<Vec<Repositor
                 (SELECT success FROM verification_run v
                  WHERE v.repo_id = r.id ORDER BY v.created_at DESC LIMIT 1)
              FROM repository r
+             JOIN project_asset a ON a.id = r.asset_id AND a.is_available = 1
              LEFT JOIN repo_profile p ON p.repo_id = r.id
              ORDER BY r.worktree_path",
         )
@@ -342,7 +343,7 @@ pub fn list_project_assets(
     let limit = limit.unwrap_or(200).clamp(1, 1_000);
     let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, root_id, path, kind, name, primary_language, last_observed_at FROM project_asset ORDER BY last_observed_at DESC LIMIT ?1")
+        .prepare("SELECT id, root_id, path, kind, name, primary_language, last_observed_at FROM project_asset WHERE is_available = 1 ORDER BY last_observed_at DESC LIMIT ?1")
         .map_err(|e| e.to_string())?;
 
     let assets = stmt
@@ -428,6 +429,11 @@ pub async fn start_scan(
             continue;
         }
 
+        let scan_started_at: String = {
+            let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
+            conn.query_row("SELECT datetime('now')", [], |row| row.get(0))
+                .map_err(|e| e.to_string())?
+        };
         let root_for_scan = root.clone();
         let db_for_scan = state.db.clone();
         let scan_result = tauri::async_runtime::spawn_blocking(move || {
@@ -456,12 +462,19 @@ pub async fn start_scan(
         roots_scanned += 1;
         repos_discovered += repos.len();
 
-        // Persist scan errors to DB
+        // Replace current root diagnostics; the job event stream retains history.
+        scanner::clear_scan_errors(&root.id, &state.db)?;
         if !scan_errors.is_empty() {
             if let Err(e) = scanner::persist_scan_errors(&scan_errors, Some(&job_id), &state.db) {
                 log::warn!("Failed to persist scan errors for root {}: {}", root.id, e);
             }
         }
+
+        let unavailable_assets = if scan_errors.is_empty() {
+            scanner::reconcile_root_assets(&root.id, &scan_started_at, &state.db)?
+        } else {
+            0
+        };
 
         if scan_errors.is_empty() {
             job_engine::append_job_event(
@@ -471,6 +484,7 @@ pub async fn start_scan(
                     "rootId": root.id,
                     "label": root.label,
                     "reposFound": repos.len(),
+                    "assetsMarkedUnavailable": unavailable_assets,
                 })
                 .to_string(),
                 &state.db,
@@ -658,14 +672,19 @@ pub fn get_repo_profile(
 #[tauri::command]
 pub async fn refresh_profiles(state: State<'_, AppState>) -> Result<usize, String> {
     let repos = list_repositories(state.clone())?;
-    let mut refreshed = 0;
-
-    for repo in &repos {
-        match profiler::profile_repo(&repo.id, &repo.worktree_path, &state.db) {
-            Ok(_) => refreshed += 1,
-            Err(e) => log::warn!("Failed to profile repo {}: {}", repo.worktree_path, e),
+    let db = state.db.clone();
+    let refreshed = tauri::async_runtime::spawn_blocking(move || {
+        let mut refreshed = 0;
+        for repo in &repos {
+            match profiler::profile_repo(&repo.id, &repo.worktree_path, &db) {
+                Ok(_) => refreshed += 1,
+                Err(e) => log::warn!("Failed to profile repo {}: {}", repo.worktree_path, e),
+            }
         }
-    }
+        refreshed
+    })
+    .await
+    .map_err(|error| format!("Profile worker failed: {error}"))?;
 
     write_audit(
         &state,
@@ -735,9 +754,17 @@ fn dispatch_queued_job(job: &Job, state: &AppState) -> Result<(), String> {
                     return Ok(());
                 }
                 if root.scan_enabled {
+                    let scan_started_at: String = {
+                        let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
+                        conn.query_row("SELECT datetime('now')", [], |row| row.get(0))
+                            .map_err(|e| e.to_string())?
+                    };
                     let (_, errors) = scan_root(root, &state.db);
+                    scanner::clear_scan_errors(&root.id, &state.db)?;
                     if !errors.is_empty() {
                         scanner::persist_scan_errors(&errors, Some(&job.id), &state.db)?;
+                    } else {
+                        scanner::reconcile_root_assets(&root.id, &scan_started_at, &state.db)?;
                     }
                 }
                 job_engine::update_progress(
@@ -807,6 +834,14 @@ pub fn request_patch_approval_cmd(
     proposal_id: String,
 ) -> Result<permissions::PermissionRequest, String> {
     permissions::request_patch(&proposal_id, &state.db)
+}
+
+#[tauri::command]
+pub fn request_rollback_approval_cmd(
+    state: State<AppState>,
+    proposal_id: String,
+) -> Result<permissions::PermissionRequest, String> {
+    permissions::request_rollback(&proposal_id, &state.db)
 }
 
 #[tauri::command]
@@ -1125,7 +1160,7 @@ pub async fn call_ai_cmd(
         &serde_json::json!({"providerId": provider_id}).to_string(),
         &state.db,
     )?;
-    let _cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
 
     job_engine::append_job_event(
         &job_id,
@@ -1136,12 +1171,20 @@ pub async fn call_ai_cmd(
 
     match ai_provider::call_ai(&provider, &prompt, None, model.as_deref()).await {
         Ok(response) => {
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                state.jobs.finish(&job_id);
+                return Err("AI call cancelled by user".into());
+            }
             job_engine::complete_job(&job_id, &state.db)?;
             state.jobs.finish(&job_id);
             job_engine::append_job_event(&job_id, "ai_call_completed", &serde_json::json!({"tokensIn": response.tokens_in, "tokensOut": response.tokens_out}).to_string(), &state.db)?;
             Ok(response)
         }
         Err(e) => {
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                state.jobs.finish(&job_id);
+                return Err("AI call cancelled by user".into());
+            }
             job_engine::fail_job(&job_id, &e, &state.db)?;
             state.jobs.finish(&job_id);
             Err(e)
@@ -1187,7 +1230,7 @@ pub async fn apply_patch_cmd(
         &serde_json::json!({"proposalId": proposal_id}).to_string(),
         &state.db,
     )?;
-    let _cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
 
     job_engine::append_job_event(
         &job_id,
@@ -1196,9 +1239,17 @@ pub async fn apply_patch_cmd(
         &state.db,
     )?;
 
-    match ai_fix::apply_patch(&proposal_id, &state.db) {
+    let db = state.db.clone();
+    let proposal_for_worker = proposal_id.clone();
+    let cancellation_for_worker = cancellation.clone();
+    let apply_result = tauri::async_runtime::spawn_blocking(move || {
+        ai_fix::apply_patch_cancellable(&proposal_for_worker, &db, &cancellation_for_worker)
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("Patch worker failed: {error}")));
+    match apply_result {
         Ok(proposal) => {
-            job_engine::complete_job(&job_id, &state.db)?;
+            job_engine::complete_committed_job(&job_id, &state.db)?;
             state.jobs.finish(&job_id);
             job_engine::append_job_event(
                 &job_id,
@@ -1209,6 +1260,10 @@ pub async fn apply_patch_cmd(
             Ok(proposal)
         }
         Err(e) => {
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                state.jobs.finish(&job_id);
+                return Err("Patch application cancelled by user".into());
+            }
             job_engine::fail_job(&job_id, &e, &state.db)?;
             state.jobs.finish(&job_id);
             Err(e)
@@ -1226,8 +1281,46 @@ pub fn reject_patch_cmd(
 }
 
 #[tauri::command]
-pub fn rollback_patch_cmd(state: State<AppState>, proposal_id: String) -> Result<(), String> {
-    ai_fix::rollback_patch(&proposal_id, &state.db)
+pub async fn rollback_patch_cmd(
+    state: State<'_, AppState>,
+    proposal_id: String,
+    approval_id: String,
+) -> Result<(), String> {
+    let (repo_id, context_hash) =
+        permissions::current_rollback_context_hash(&proposal_id, &state.db)?;
+    permissions::consume_request(
+        &approval_id,
+        "fs.rollback_patch",
+        Some(&repo_id),
+        &context_hash,
+        &state.db,
+    )?;
+    let job_id = job_engine::create_job(
+        "patch_rollback",
+        &serde_json::json!({"proposalId": proposal_id}).to_string(),
+        &state.db,
+    )?;
+    let cancellation = job_engine::begin_job(&job_id, &state.db, &state.jobs)?;
+    let db = state.db.clone();
+    let proposal_for_worker = proposal_id.clone();
+    let cancellation_for_worker = cancellation.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        ai_fix::rollback_patch_cancellable(&proposal_for_worker, &db, &cancellation_for_worker)
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("Rollback worker failed: {error}")));
+    match result {
+        Ok(()) => job_engine::complete_committed_job(&job_id, &state.db)?,
+        Err(ref error) => {
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                state.jobs.finish(&job_id);
+                return Err("Patch rollback cancelled by user".into());
+            }
+            job_engine::fail_job(&job_id, error, &state.db)?
+        }
+    }
+    state.jobs.finish(&job_id);
+    result
 }
 
 // --- AI Fix Plan / Propose commands ---
@@ -1246,6 +1339,7 @@ pub async fn generate_fix_plan_cmd(
         &provider_id,
         model.as_deref(),
         &state.db,
+        &state.jobs,
     )
     .await
 }
@@ -1266,6 +1360,7 @@ pub async fn propose_fix_cmd(
         &fix_instruction,
         target_file.as_deref(),
         &state.db,
+        &state.jobs,
     )
     .await
 }

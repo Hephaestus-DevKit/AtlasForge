@@ -22,7 +22,7 @@ pub struct AiProvider {
 pub fn upsert_provider(provider: &AiProvider, db: &Db) -> Result<(), String> {
     if !matches!(
         provider.adapter_type.as_str(),
-        "ollama" | "openai_compatible" | "deepseek" | "openai" | "anthropic"
+        "ollama" | "openai_compatible" | "anthropic" | "custom"
     ) {
         return Err(format!(
             "Unsupported adapter type: {}",
@@ -391,7 +391,7 @@ pub async fn call_ai(
 
     match provider.adapter_type.as_str() {
         "ollama" => call_ollama(provider, system_prompt, model, prompt).await,
-        "openai_compatible" | "deepseek" | "openai" => {
+        "openai_compatible" | "custom" => {
             call_openai_compatible(provider, system_prompt, model, prompt).await
         }
         "anthropic" => call_anthropic(provider, system_prompt, model, prompt).await,
@@ -480,7 +480,7 @@ pub async fn probe_provider(provider: &AiProvider) -> ProviderProbe {
                     })
                     .unwrap_or_default())
             }
-            "openai_compatible" | "deepseek" | "openai" => {
+            "openai_compatible" | "custom" => {
                 let url = get_openai_url(&provider.base_url, "models");
                 let mut request = http_client()?.get(url);
                 if let Some(key_ref) = &provider.api_key_ref {
@@ -881,5 +881,34 @@ mod tests {
         assert!(!redacted.contains("github_pat_"));
         assert!(!redacted.contains("sk-proj-"));
         assert!(!redacted.to_lowercase().contains("authorization:"));
+    }
+
+    #[test]
+    fn every_supported_adapter_round_trips_through_the_database_contract() {
+        let db = crate::db::Db::new(&std::path::PathBuf::from(":memory:")).unwrap();
+        for adapter in ["ollama", "openai_compatible", "anthropic", "custom"] {
+            let provider = AiProvider {
+                id: format!("provider-{adapter}"),
+                name: format!("Provider {adapter}"),
+                adapter_type: adapter.into(),
+                base_url: "https://provider.example.com/v1".into(),
+                api_key_ref: None,
+                default_model: "model".into(),
+                available_models: vec![],
+                is_local: false,
+                is_default: false,
+                enabled: true,
+                config: serde_json::json!({}),
+            };
+            upsert_provider(&provider, &db).unwrap();
+        }
+        let adapters = list_providers(&db)
+            .unwrap()
+            .into_iter()
+            .map(|provider| provider.adapter_type)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(adapters.len(), 4);
+        assert!(!adapters.contains("deepseek"));
+        assert!(!adapters.contains("openai"));
     }
 }

@@ -286,34 +286,141 @@ pub fn consume_request(
     expected_context_hash: &str,
     db: &Db,
 ) -> Result<(), String> {
-    expire_requests(db)?;
-    let request = load_request(id, db)?;
-    if request.status != "approved" {
-        return Err(format!(
-            "Approval request is '{}', not approved",
-            request.status
-        ));
-    }
-    if request.capability != capability
-        || request.repo_id.as_deref() != repo_id
-        || request.context_hash != expected_context_hash
-    {
-        return Err("Approval does not match the current operation context".into());
-    }
+    consume_requests(
+        &[(id, capability, repo_id, expected_context_hash)],
+        db,
+    )
+}
+
+pub fn request_rollback(proposal_id: &str, db: &Db) -> Result<PermissionRequest, String> {
+    let (repo_id, repo_path, file_path, head, git_status, current_hash, context_hash) =
+        rollback_context(proposal_id, db)?;
+    create_request(
+        None,
+        Some(&repo_id),
+        "fs.rollback_patch",
+        &repo_path,
+        "high",
+        None,
+        &context_hash,
+        serde_json::json!({
+            "proposalId": proposal_id,
+            "filePath": file_path,
+            "repoPath": repo_path,
+            "headSha": head,
+            "workingTreeState": git_status,
+            "currentFileHash": current_hash,
+            "effect": "Restore the exact pre-patch file content",
+        }),
+        db,
+    )
+}
+
+pub fn current_rollback_context_hash(
+    proposal_id: &str,
+    db: &Db,
+) -> Result<(String, String), String> {
+    let (repo_id, _, _, _, _, _, context_hash) = rollback_context(proposal_id, db)?;
+    Ok((repo_id, context_hash))
+}
+
+#[allow(clippy::type_complexity)]
+fn rollback_context(
+    proposal_id: &str,
+    db: &Db,
+) -> Result<(String, String, String, String, String, String, String), String> {
     let conn = db.conn.lock().map_err(|error| error.to_string())?;
-    let changed = conn
-        .execute(
-            "UPDATE permission_request
-             SET status = 'consumed', consumed_at = ?1
-             WHERE id = ?2 AND status = 'approved'",
-            rusqlite::params![chrono::Utc::now().to_rfc3339(), id],
+    let (repo_id, repo_path, file_path, patch_content, proposal_status): (
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT p.repo_id, r.worktree_path, p.file_path, p.patch_content, p.status
+             FROM patch_proposal p JOIN repository r ON r.id = p.repo_id
+             WHERE p.id = ?1",
+            rusqlite::params![proposal_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .map_err(|error| format!("Patch proposal not found: {error}"))?;
+    drop(conn);
+    if proposal_status != "applied" {
+        return Err("Only an applied patch can be rolled back".into());
+    }
+    let repo_root = std::path::Path::new(&repo_path)
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve repository: {error}"))?;
+    let target = repo_root
+        .join(&file_path)
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve rollback target: {error}"))?;
+    if !target.starts_with(&repo_root) {
+        return Err("Rollback target escapes the repository".into());
+    }
+    let head = git_output(&repo_path, &["rev-parse", "HEAD"])?;
+    let git_status = git_output(&repo_path, &["status", "--porcelain"])?;
+    let current_hash = hash_text_file(&target)?;
+    let context_hash = hash_text(&format!(
+        "rollback\n{}\n{}\n{}\n{}\n{}",
+        repo_path,
+        head,
+        git_status,
+        current_hash,
+        hash_text(&patch_content),
+    ));
+    Ok((repo_id, repo_path, file_path, head, git_status, current_hash, context_hash))
+}
+
+/// Validate and consume a group of approvals atomically. No request is consumed
+/// when any member is stale, mismatched, expired, or already used.
+pub fn consume_requests(
+    requests: &[(&str, &str, Option<&str>, &str)],
+    db: &Db,
+) -> Result<(), String> {
+    expire_requests(db)?;
+    let mut conn = db.conn.lock().map_err(|error| error.to_string())?;
+    let tx = conn.transaction().map_err(|error| error.to_string())?;
+    for (id, capability, repo_id, context_hash) in requests {
+        let actual: (String, String, Option<String>, String) = tx
+            .query_row(
+                "SELECT status, capability, repo_id, context_hash
+                 FROM permission_request WHERE id = ?1",
+                rusqlite::params![*id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .map_err(|error| format!("Approval request not found: {error}"))?;
+        if actual.0 != "approved" {
+            return Err(format!("Approval request is '{}', not approved", actual.0));
+        }
+        if actual.1 != *capability
+            || actual.2.as_deref() != *repo_id
+            || actual.3 != *context_hash
+        {
+            return Err("Approval does not match the current operation context".into());
+        }
+    }
+    let consumed_at = chrono::Utc::now().to_rfc3339();
+    for (id, _, _, _) in requests {
+        let changed = tx
+            .execute(
+                "UPDATE permission_request SET status = 'consumed', consumed_at = ?1
+                 WHERE id = ?2 AND status = 'approved'",
+                rusqlite::params![consumed_at, *id],
+            )
+            .map_err(|error| error.to_string())?;
+        if changed != 1 {
+            return Err("Approval set changed while it was being consumed".into());
+        }
+        tx.execute(
+            "INSERT INTO audit_log (id, action, subject, scope, capability, risk_level, detail)
+             VALUES (?1, 'permission_consumed', ?2, 'permission', 'permission', 'high', '{}')",
+            rusqlite::params![uuid::Uuid::new_v4().to_string(), *id],
         )
         .map_err(|error| error.to_string())?;
-    if changed == 0 {
-        return Err("Approval has already been consumed".into());
     }
-    drop(conn);
-    write_audit(id, "consumed", db)
+    tx.commit().map_err(|error| error.to_string())
 }
 
 pub fn list_requests(status: Option<&str>, db: &Db) -> Result<Vec<PermissionRequest>, String> {
@@ -398,15 +505,16 @@ fn write_audit(id: &str, decision: &str, db: &Db) -> Result<(), String> {
 }
 
 fn git_output(repo_path: &str, args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(repo_path)
-        .output()
+    let output = crate::process_runner::run_default(
+        "git",
+        args,
+        Some(std::path::Path::new(repo_path)),
+    )
         .map_err(|error| format!("Cannot run git: {}", error))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    if !output.success {
+        return Err(output.stderr.trim().to_string());
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(output.stdout.trim().to_string())
 }
 
 #[cfg(test)]

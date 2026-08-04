@@ -186,14 +186,10 @@ pub fn set_sync_errors(integration_id: &str, errors: &[String], db: &Db) -> Resu
 
 /// Check if gh CLI is authenticated.
 pub fn check_gh_auth() -> Result<GhAuthStatus, String> {
-    let output = std::process::Command::new("gh")
-        .args(["auth", "status"])
-        .output()
+    let output = crate::process_runner::run_default("gh", &["auth", "status"], None)
         .map_err(|e| format!("gh CLI not found: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let combined = format!("{}\n{}", stdout, stderr);
+    let combined = format!("{}\n{}", output.stdout, output.stderr);
 
     let authenticated = combined.contains("Logged in");
     let username = combined
@@ -233,11 +229,12 @@ pub fn resolve_github_repo(
     db: &Db,
 ) -> Result<GitHubIntegration, String> {
     // Get remote URL
-    let remote_url = std::process::Command::new("git")
-        .args(["config", "--get", "remote.origin.url"])
-        .current_dir(worktree_path)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    let remote_url = crate::process_runner::run_default(
+        "git",
+        &["config", "--get", "remote.origin.url"],
+        Some(std::path::Path::new(worktree_path)),
+    )
+        .map(|o| o.stdout.trim().to_string())
         .map_err(|e| format!("Cannot get git remote: {}", e))?;
 
     if remote_url.is_empty() {
@@ -247,20 +244,21 @@ pub fn resolve_github_repo(
     let (owner, repo_name) = parse_github_url(&remote_url)?;
 
     // Fetch repo info via gh CLI
-    let repo_info = std::process::Command::new("gh")
-        .args([
+    let repo_info = crate::process_runner::run_default(
+        "gh",
+        &[
             "repo",
             "view",
             &format!("{}/{}", owner, repo_name),
             "--json",
             "isFork,defaultBranchRef,visibility",
-        ])
-        .output()
+        ],
+        None,
+    )
         .map_err(|e| format!("gh CLI not available: {}", e))?;
 
-    let (is_fork, default_branch, visibility) = if repo_info.status.success() {
-        let info: Value = serde_json::from_str(&String::from_utf8_lossy(&repo_info.stdout))
-            .unwrap_or(Value::Null);
+    let (is_fork, default_branch, visibility) = if repo_info.success {
+        let info: Value = serde_json::from_str(&repo_info.stdout).unwrap_or(Value::Null);
         (
             info.get("isFork")
                 .and_then(|v| v.as_bool())
@@ -308,8 +306,9 @@ pub fn sync_workflow_runs(
     integration: &GitHubIntegration,
     db: &Db,
 ) -> Result<Vec<WorkflowRun>, String> {
-    let output = std::process::Command::new("gh")
-        .args([
+    let output = crate::process_runner::run_default(
+        "gh",
+        &[
             "run",
             "list",
             "--repo",
@@ -318,18 +317,16 @@ pub fn sync_workflow_runs(
             "20",
             "--json",
             "databaseId,name,headBranch,status,conclusion,createdAt,updatedAt,url",
-        ])
-        .output()
+        ],
+        None,
+    )
         .map_err(|e| format!("gh CLI not available: {}", e))?;
 
-    if !output.status.success() {
-        return Err(format!(
-            "Failed to fetch workflow runs: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if !output.success {
+        return Err(format!("Failed to fetch workflow runs: {}", output.stderr));
     }
 
-    let runs: Vec<Value> = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
+    let runs: Vec<Value> = serde_json::from_str(&output.stdout)
         .map_err(|e| format!("Invalid response: {}", e))?;
 
     let mut workflow_runs = Vec::new();
@@ -412,8 +409,9 @@ pub fn sync_workflow_runs(
 
 /// Sync PRs from GitHub.
 pub fn sync_prs(integration: &GitHubIntegration, db: &Db) -> Result<Vec<GitHubPR>, String> {
-    let output = std::process::Command::new("gh")
-        .args([
+    let output = crate::process_runner::run_default(
+        "gh",
+        &[
             "pr",
             "list",
             "--repo",
@@ -424,18 +422,16 @@ pub fn sync_prs(integration: &GitHubIntegration, db: &Db) -> Result<Vec<GitHubPR
             "20",
             "--json",
             "number,title,state,author,headRefName,url",
-        ])
-        .output()
+        ],
+        None,
+    )
         .map_err(|e| format!("gh CLI not available: {}", e))?;
 
-    if !output.status.success() {
-        return Err(format!(
-            "Failed to fetch PRs: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if !output.success {
+        return Err(format!("Failed to fetch PRs: {}", output.stderr));
     }
 
-    let prs: Vec<Value> = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
+    let prs: Vec<Value> = serde_json::from_str(&output.stdout)
         .map_err(|e| format!("Invalid response: {}", e))?;
 
     let mut result = Vec::new();
@@ -512,8 +508,9 @@ pub fn sync_releases(
     integration: &GitHubIntegration,
     db: &Db,
 ) -> Result<Vec<GitHubRelease>, String> {
-    let output = std::process::Command::new("gh")
-        .args([
+    let output = crate::process_runner::run_default(
+        "gh",
+        &[
             "release",
             "list",
             "--repo",
@@ -522,18 +519,16 @@ pub fn sync_releases(
             "20",
             "--json",
             "databaseId,tagName,name,isDraft,isPrerelease,publishedAt,url",
-        ])
-        .output()
+        ],
+        None,
+    )
         .map_err(|e| format!("gh CLI not available: {}", e))?;
 
-    if !output.status.success() {
-        return Err(format!(
-            "Failed to fetch releases: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if !output.success {
+        return Err(format!("Failed to fetch releases: {}", output.stderr));
     }
 
-    let releases: Vec<Value> = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
+    let releases: Vec<Value> = serde_json::from_str(&output.stdout)
         .map_err(|e| format!("Invalid response: {}", e))?;
 
     let mut result = Vec::new();
@@ -637,19 +632,14 @@ pub fn create_pr(
         args.push("--draft");
     }
 
-    let output = std::process::Command::new("gh")
-        .args(&args)
-        .output()
+    let output = crate::process_runner::run_default("gh", &args, None)
         .map_err(|e| format!("gh CLI not available: {}", e))?;
 
-    if !output.status.success() {
-        return Err(format!(
-            "Failed to create PR: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if !output.success {
+        return Err(format!("Failed to create PR: {}", output.stderr));
     }
 
-    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let url = output.stdout.trim().to_string();
     let pr_number: i64 = url
         .split('/')
         .next_back()
@@ -697,16 +687,11 @@ pub fn create_release(
         args.push("--prerelease");
     }
 
-    let output = std::process::Command::new("gh")
-        .args(&args)
-        .output()
+    let output = crate::process_runner::run_default("gh", &args, None)
         .map_err(|e| format!("gh CLI not available: {}", e))?;
 
-    if !output.status.success() {
-        return Err(format!(
-            "Failed to create release: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if !output.success {
+        return Err(format!("Failed to create release: {}", output.stderr));
     }
 
     Ok(GitHubRelease {
@@ -718,28 +703,27 @@ pub fn create_release(
         is_draft: draft,
         is_prerelease: prerelease,
         published_at: Some(chrono::Utc::now().to_rfc3339()),
-        url: Some(String::from_utf8_lossy(&output.stdout).trim().to_string()),
+        url: Some(output.stdout.trim().to_string()),
     })
 }
 
 /// Rerun a failed workflow.
 pub fn rerun_workflow(integration: &GitHubIntegration, run_id: &str) -> Result<(), String> {
-    let output = std::process::Command::new("gh")
-        .args([
+    let output = crate::process_runner::run_default(
+        "gh",
+        &[
             "run",
             "rerun",
             run_id,
             "--repo",
             &format!("{}/{}", integration.github_owner, integration.github_repo),
-        ])
-        .output()
+        ],
+        None,
+    )
         .map_err(|e| format!("gh CLI not available: {}", e))?;
 
-    if !output.status.success() {
-        return Err(format!(
-            "Failed to rerun workflow: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if !output.success {
+        return Err(format!("Failed to rerun workflow: {}", output.stderr));
     }
 
     Ok(())

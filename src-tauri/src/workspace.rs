@@ -79,7 +79,9 @@ pub fn load_workspace_roots(db: &Db) -> Result<Vec<WorkspaceRoot>, String> {
 pub fn repository_path(repo_id: &str, db: &Db) -> Result<String, String> {
     let conn = db.conn.lock().map_err(|error| error.to_string())?;
     conn.query_row(
-        "SELECT worktree_path FROM repository WHERE id = ?1",
+        "SELECT r.worktree_path FROM repository r
+         JOIN project_asset a ON a.id = r.asset_id
+         WHERE r.id = ?1 AND a.is_available = 1",
         rusqlite::params![repo_id],
         |row| row.get(0),
     )

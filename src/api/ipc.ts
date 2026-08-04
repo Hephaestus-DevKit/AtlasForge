@@ -254,8 +254,8 @@ export async function rejectPatch(proposalId: string, reason: string): Promise<v
   return invoke("reject_patch_cmd", { proposalId, reason });
 }
 
-export async function rollbackPatch(proposalId: string): Promise<void> {
-  return invoke("rollback_patch_cmd", { proposalId });
+export async function rollbackPatch(proposalId: string, approvalId: string): Promise<void> {
+  return invoke("rollback_patch_cmd", { proposalId, approvalId });
 }
 
 // --- AI Fix Plan commands ---
@@ -358,6 +358,10 @@ export async function requestVerificationApproval(
 
 export async function requestPatchApproval(proposalId: string): Promise<PermissionRequest> {
   return invoke<PermissionRequest>("request_patch_approval_cmd", { proposalId });
+}
+
+export async function requestRollbackApproval(proposalId: string): Promise<PermissionRequest> {
+  return invoke<PermissionRequest>("request_rollback_approval_cmd", { proposalId });
 }
 
 export async function decidePermissionRequest(

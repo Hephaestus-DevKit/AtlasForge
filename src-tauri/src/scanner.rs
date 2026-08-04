@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::VecDeque;
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
 use walkdir::WalkDir;
 
@@ -331,7 +330,7 @@ fn ensure_project_asset(
     if let Some(id) = existing {
         // Update last_observed_at
         conn.execute(
-            "UPDATE project_asset SET last_observed_at = datetime('now') WHERE id = ?1",
+            "UPDATE project_asset SET last_observed_at = datetime('now'), is_available = 1, missing_since = NULL WHERE id = ?1",
             rusqlite::params![id],
         )
         .map_err(|e| e.to_string())?;
@@ -346,6 +345,30 @@ fn ensure_project_asset(
     .map_err(|e| e.to_string())?;
 
     Ok(id)
+}
+
+/// Mark assets that were not observed during a fully successful root scan as
+/// unavailable. Historical repository records remain available for audit and
+/// foreign-key integrity, while normal UI queries hide them.
+pub fn reconcile_root_assets(root_id: &str, scan_started_at: &str, db: &Db) -> Result<usize, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE project_asset
+         SET is_available = 0, missing_since = datetime('now')
+         WHERE root_id = ?1 AND is_available = 1 AND last_observed_at < ?2",
+        rusqlite::params![root_id, scan_started_at],
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn clear_scan_errors(root_id: &str, db: &Db) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM scan_error WHERE root_id = ?1",
+        rusqlite::params![root_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn upsert_repository(repo: &Repository, conn: &rusqlite::Connection) -> Result<(), String> {
@@ -409,21 +432,17 @@ fn upsert_repository(repo: &Repository, conn: &rusqlite::Connection) -> Result<(
 }
 
 fn git_command(repo_path: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo_path)
-        .output()
+    let output = crate::process_runner::run_default("git", args, Some(repo_path))
         .map_err(|e| format!("git command failed: {}", e))?;
 
-    if !output.status.success() {
+    if !output.success {
         return Err(format!(
             "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
+            args, output.stderr
         ));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(output.stdout.trim().to_string())
 }
 
 fn is_dirty(repo_path: &Path) -> bool {

@@ -5,11 +5,12 @@ use std::path::Path;
 
 /// Check whether a repo has no remote origin (local-only).
 fn is_local_repo(path: &Path) -> bool {
-    !std::process::Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(path)
-        .output()
-        .map(|o| o.status.success())
+    !crate::process_runner::run_default(
+        "git",
+        &["remote", "get-url", "origin"],
+        Some(path),
+    )
+        .map(|o| o.success)
         .unwrap_or(true)
 }
 
@@ -676,10 +677,7 @@ fn check_release(path: &Path, _profile: &Option<RepoProfile>, local_only: bool) 
     }
 
     // Check for tags
-    let has_tags = std::process::Command::new("git")
-        .args(["tag"])
-        .current_dir(path)
-        .output()
+    let has_tags = crate::process_runner::run_default("git", &["tag"], Some(path))
         .map(|o| !o.stdout.is_empty())
         .unwrap_or(false);
 
@@ -700,10 +698,11 @@ fn check_git_hygiene(path: &Path) -> CategoryScore {
     let mut score = 90;
 
     // Check for large files in git
-    let is_dirty = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(path)
-        .output()
+    let is_dirty = crate::process_runner::run_default(
+        "git",
+        &["status", "--porcelain"],
+        Some(path),
+    )
         .map(|o| !o.stdout.is_empty())
         .unwrap_or(false);
 
@@ -723,11 +722,8 @@ fn check_git_hygiene(path: &Path) -> CategoryScore {
     }
 
     // Check for stashes
-    let stash_count = std::process::Command::new("git")
-        .args(["stash", "list"])
-        .current_dir(path)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
+    let stash_count = crate::process_runner::run_default("git", &["stash", "list"], Some(path))
+        .map(|o| o.stdout.lines().count())
         .unwrap_or(0);
 
     if stash_count > 5 {
@@ -847,19 +843,20 @@ fn generate_recommended_tasks(findings: &[Finding]) -> Vec<serde_json::Value> {
 }
 
 fn save_snapshot(snapshot: &HealthSnapshot, findings: &[Finding], db: &Db) -> Result<(), String> {
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // Delete old snapshots for this repo (keep only latest)
-    conn.execute("DELETE FROM finding WHERE snapshot_id IN (SELECT id FROM repo_health_snapshot WHERE repo_id = ?1)", rusqlite::params![snapshot.repo_id])
+    tx.execute("DELETE FROM finding WHERE snapshot_id IN (SELECT id FROM repo_health_snapshot WHERE repo_id = ?1)", rusqlite::params![snapshot.repo_id])
         .map_err(|e| e.to_string())?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM repo_health_snapshot WHERE repo_id = ?1",
         rusqlite::params![snapshot.repo_id],
     )
     .map_err(|e| e.to_string())?;
 
     // Insert new snapshot
-    conn.execute(
+    tx.execute(
         "INSERT INTO repo_health_snapshot (id, repo_id, scan_id, score, category_scores, recommended_tasks, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             snapshot.id,
@@ -875,7 +872,7 @@ fn save_snapshot(snapshot: &HealthSnapshot, findings: &[Finding], db: &Db) -> Re
 
     // Insert findings
     for finding in findings {
-        conn.execute(
+        tx.execute(
             "INSERT INTO finding (id, snapshot_id, category, severity, title, description, evidence, file_path, suggested_fix, auto_fixable) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 finding.id,
@@ -893,7 +890,7 @@ fn save_snapshot(snapshot: &HealthSnapshot, findings: &[Finding], db: &Db) -> Re
         .map_err(|e| e.to_string())?;
     }
 
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 /// Load the latest health snapshot for a repo.

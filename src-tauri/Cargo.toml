@@ -1,6 +1,6 @@
 [package]
 name = "atlasforge"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local-first AI engineering workbench"
 authors = ["AtlasForge"]
 edition = "2021"
@@ -26,7 +26,7 @@ thiserror = "1"
 log = "0.4"
 env_logger = "0.11"
 regex = "1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time"] }
 tauri-plugin-dialog = "2.7.1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "http2"] }
 

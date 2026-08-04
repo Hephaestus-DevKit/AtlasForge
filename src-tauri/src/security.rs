@@ -1,6 +1,16 @@
 use crate::models::WorkspaceRoot;
 use std::path::Path;
 
+const SENSITIVE_DIRECTORY_NAMES: &[&str] = &[
+    ".aws", ".azure", ".gnupg", ".ssh", "credentials", "secrets",
+];
+
+const SENSITIVE_FILE_NAMES: &[&str] = &[
+    ".aws_credentials", ".netrc", ".npmrc", ".pypirc", "authorized_keys",
+    "credentials.json", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa",
+    "known_hosts", "service-account.json", "serviceaccount.json",
+];
+
 #[cfg(windows)]
 fn normalized_windows_path(path: &Path) -> String {
     path.to_string_lossy()
@@ -169,6 +179,19 @@ pub const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
     ".cache",
     "target",
     "*.pyc",
+    ".aws",
+    ".azure",
+    ".gnupg",
+    ".ssh",
+    "credentials",
+    "secrets",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "*.pem",
+    "*.p12",
+    "*.pfx",
+    "*.key",
 ];
 
 #[cfg(test)]
@@ -216,6 +239,30 @@ mod tests {
         let root = test_root(root_path, "read_write");
         let path = root_path.join("project/src/main.ts");
         assert!(!is_excluded(&path, &root));
+    }
+
+    #[test]
+    fn sensitive_paths_are_case_insensitive() {
+        assert!(is_sensitive_path(Path::new("repo/Secrets/token.txt")));
+        assert!(is_sensitive_path(Path::new("repo/.ENV.Local")));
+        assert!(is_sensitive_path(Path::new("repo/Credentials.JSON")));
+        assert!(!is_sensitive_path(Path::new("repo/src/config.ts")));
+    }
+
+    #[test]
+    fn authorize_read_blocks_sensitive_and_custom_excluded_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_path = temp.path().join("repo");
+        fs::create_dir_all(root_path.join("private")).unwrap();
+        fs::write(root_path.join("private/note.txt"), "private").unwrap();
+        fs::write(root_path.join(".env"), "TOKEN=short").unwrap();
+        fs::write(root_path.join("readme.txt"), "safe").unwrap();
+        let mut root = test_root(&root_path, "read_write");
+        root.exclude_globs.push("private".into());
+
+        assert!(authorize_read(&root_path.join("readme.txt"), std::slice::from_ref(&root)).is_ok());
+        assert!(authorize_read(&root_path.join(".env"), std::slice::from_ref(&root)).is_err());
+        assert!(authorize_read(&root_path.join("private/note.txt"), &[root]).is_err());
     }
 
     #[test]
@@ -277,5 +324,54 @@ mod tests {
             &root
         ));
     }
+}
+
+/// Return whether a path is sensitive regardless of configurable root globs.
+/// Matching is case-insensitive on every platform so repository behavior stays
+/// consistent when it moves between Windows and case-sensitive filesystems.
+pub fn is_sensitive_path(path: &Path) -> bool {
+    for component in path.components() {
+        let std::path::Component::Normal(value) = component else {
+            continue;
+        };
+        let Some(value) = value.to_str() else {
+            continue;
+        };
+        let value = value.to_lowercase();
+        if SENSITIVE_DIRECTORY_NAMES.contains(&value.as_str()) {
+            return true;
+        }
+    }
+
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            let value = value.to_lowercase();
+            value == ".env"
+                || value.starts_with(".env.")
+                || SENSITIVE_FILE_NAMES.contains(&value.as_str())
+                || value.ends_with(".pem")
+                || value.ends_with(".p12")
+                || value.ends_with(".pfx")
+                || value.ends_with(".key")
+        })
+        .unwrap_or(false)
+}
+
+/// Authorize a filesystem read and enforce user exclusions plus the global
+/// sensitive-path policy. The matching root can be reused to filter children.
+pub fn authorize_read<'a>(
+    path: &Path,
+    roots: &'a [WorkspaceRoot],
+) -> Result<&'a WorkspaceRoot, String> {
+    let root = authorize_path(path, roots)
+        .ok_or_else(|| format!("Path {:?} is not within any authorized root", path))?;
+    if is_sensitive_path(path) {
+        return Err(format!("Path {:?} is blocked by the sensitive-path policy", path));
+    }
+    if is_excluded(path, root) {
+        return Err(format!("Path {:?} is excluded by workspace policy", path));
+    }
+    Ok(root)
 }
 

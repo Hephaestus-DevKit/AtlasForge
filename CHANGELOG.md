@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-05
+
+### Fixed
+
+- Align AI provider adapter values with the persisted SQLite contract.
+- Enforce one case-insensitive sensitive-path policy across indexing and Tool Broker reads.
+- Redact Tool Broker results before returning them and bound filesystem reads.
+- Persist patch recovery metadata before mutation; add approved, hash-bound rollback and startup recovery.
+- Enforce valid job terminal transitions and atomically consume batch approvals and replace health snapshots.
+- Reconcile missing repository assets without deleting their audit history.
+- Prevent stale repository detail requests and profile caches from overwriting current UI state.
+
+### Changed
+
+- Move automation scheduling into the trusted Rust lifecycle and make task polling non-overlapping.
+- Upgrade the supported runtime to Node.js 24 LTS and current compatible Tauri, Playwright, Vite, and Vitest releases.
+- Use official GitHub Pages actions with minimal permissions and add native Tauri build, Rust formatting, clippy, CodeQL, Dependabot, and repository governance files.
+- Add jsdom interaction coverage and keyboard/focus behavior for repository tables, tabs, and approval dialogs.
+- Remove generated Tauri schemas and machine-specific historical build transcripts from source control.
+
+### Security
+
+- Filter excluded and sensitive directory entries from `fs.list`, block them in `fs.read`, and keep raw secret-bearing tool output out of caller responses.
+- Require a context-bound, expiring, single-use approval before rollback modifies a worktree.
+
 ## [0.1.0] - 2026-08-02
 
 ### Added

@@ -8,7 +8,6 @@ import { Tasks } from "./pages/Tasks";
 import { Knowledge } from "./pages/Knowledge";
 import { Automations } from "./pages/Automations";
 import { Settings } from "./pages/Settings";
-import { tickScheduler } from "./api/ipc";
 import { currentRoute, type AppRoute } from "./routing";
 
 const pages: Record<AppRoute, ReactNode> = {
@@ -28,17 +27,6 @@ function App() {
     const updateRoute = () => setRoute(currentRoute());
     window.addEventListener("hashchange", updateRoute);
     return () => window.removeEventListener("hashchange", updateRoute);
-  }, []);
-
-  useEffect(() => {
-    const tick = () => {
-      void tickScheduler().catch(() => {
-        // Browser-only development and tests do not expose the Tauri IPC bridge.
-      });
-    };
-    tick();
-    const timer = window.setInterval(tick, 60_000);
-    return () => window.clearInterval(timer);
   }, []);
 
   return (

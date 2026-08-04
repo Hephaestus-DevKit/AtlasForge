@@ -194,11 +194,12 @@ discover files
 - 输出裁剪和脱敏。
 - rollback hook。
 
-0.1.0 已注册工具：
+0.1.x 已注册 Tool Broker 工具：
 
 - Filesystem：`fs.list`、`fs.read`。
 - Git：`git.status`、`git.diff`。
-- Shell：`shell.verify`，复用批准和隔离验证边界。
+
+`shell.verify` 使用独立的检测、预览、单次审批、超时、进程树终止和结果持久化入口，不通过当前只读 Tool Broker 注册表暴露。
 
 以下是扩展类型，不代表当前已开放：
 

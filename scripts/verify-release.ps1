@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$TotalSteps = 6
+$TotalSteps = 8
 if ($E2E.IsPresent) { $TotalSteps++ }
 if ($FullBuild.IsPresent) { $TotalSteps++ }
 $Step = 0
@@ -34,6 +34,20 @@ $Step++
 Write-Host "[$Step/$TotalSteps] Running frontend build..." -ForegroundColor Yellow
 npm run build
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+
+$Step++
+Write-Host "[$Step/$TotalSteps] Checking Rust formatting..." -ForegroundColor Yellow
+& cargo "+stable-x86_64-pc-windows-msvc" fmt --manifest-path "src-tauri\Cargo.toml" -- --check
+if ($LASTEXITCODE -ne 0) { throw "Rust formatting check failed" }
+
+$Step++
+Write-Host "[$Step/$TotalSteps] Running Rust clippy..." -ForegroundColor Yellow
+$ClippyArgs = @("clippy", "--manifest-path", "src-tauri\Cargo.toml", "--target", $Target, "--", "-D", "warnings")
+if ($Target -eq "x86_64-pc-windows-msvc") {
+    $ClippyArgs = @("+stable-x86_64-pc-windows-msvc") + $ClippyArgs
+}
+& cargo @ClippyArgs
+if ($LASTEXITCODE -ne 0) { throw "Rust clippy failed" }
 
 $Step++
 Write-Host "[$Step/$TotalSteps] Running Rust tests..." -ForegroundColor Yellow
