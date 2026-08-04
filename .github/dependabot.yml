@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      frontend-patches:
+        update-types: [patch, minor]
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    groups:
+      rust-patches:
+        update-types: [patch, minor]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

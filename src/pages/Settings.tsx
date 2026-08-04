@@ -32,11 +32,6 @@ const PLACEHOLDERS: Record<string, { baseUrl: string; model: string; apiKeyRef: 
     model: "e.g., llama3, qwen2.5",
     apiKeyRef: "Not required for local Ollama",
   },
-  deepseek: {
-    baseUrl: "https://api.deepseek.com",
-    model: "e.g., deepseek-chat, deepseek-coder",
-    apiKeyRef: "DEEPSEEK_API_KEY",
-  },
   openai_compatible: {
     baseUrl: "https://api.openai.com/v1",
     model: "e.g., gpt-4o, gpt-4o-mini",
@@ -46,6 +41,11 @@ const PLACEHOLDERS: Record<string, { baseUrl: string; model: string; apiKeyRef: 
     baseUrl: "https://api.anthropic.com",
     model: "e.g., claude-3-5-sonnet-20241022",
     apiKeyRef: "ANTHROPIC_API_KEY",
+  },
+  custom: {
+    baseUrl: "https://provider.example.com/v1",
+    model: "e.g., provider-model",
+    apiKeyRef: "PROVIDER_API_KEY",
   },
 };
 
@@ -119,10 +119,6 @@ export function Settings() {
       defaults.baseUrl = "http://localhost:11434";
       defaults.defaultModel = "llama3";
       defaults.apiKeyRef = null;
-    } else if (type === "deepseek") {
-      defaults.baseUrl = "https://api.deepseek.com";
-      defaults.defaultModel = "deepseek-chat";
-      defaults.apiKeyRef = "DEEPSEEK_API_KEY";
     } else if (type === "openai_compatible") {
       defaults.baseUrl = "https://api.openai.com/v1";
       defaults.defaultModel = "gpt-4o";
@@ -131,6 +127,10 @@ export function Settings() {
       defaults.baseUrl = "https://api.anthropic.com";
       defaults.defaultModel = "claude-3-5-sonnet-20241022";
       defaults.apiKeyRef = "ANTHROPIC_API_KEY";
+    } else if (type === "custom") {
+      defaults.baseUrl = "";
+      defaults.defaultModel = "";
+      defaults.apiKeyRef = null;
     }
     setForm({
       ...form,
@@ -263,9 +263,9 @@ export function Settings() {
                     style={{ width: "100%" }}
                   >
                     <option value="ollama">Local (Ollama)</option>
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="openai_compatible">OpenAI</option>
+                    <option value="openai_compatible">OpenAI-compatible (OpenAI / DeepSeek / LM Studio)</option>
                     <option value="anthropic">Anthropic</option>
+                    <option value="custom">Custom OpenAI-compatible</option>
                   </select>
                 </div>
               </div>

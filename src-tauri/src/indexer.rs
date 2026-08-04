@@ -24,7 +24,9 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
     }
 
     let mut stats = IndexStats::default();
-    let files = collect_indexable_files(root);
+    let roots = crate::workspace::load_workspace_roots(db)?;
+    let policy_root = crate::security::authorize_read(root, &roots)?;
+    let files = collect_indexable_files(root, Some(policy_root));
     let current_paths: HashSet<String> =
         files.iter().map(|(relative, _)| relative.clone()).collect();
 
@@ -56,10 +58,8 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
             })
             .map_err(|e| e.to_string())?;
         let mut map = std::collections::HashMap::new();
-        for row in rows {
-            if let Ok((path, doc)) = row {
-                map.insert(path, doc);
-            }
+        for (path, doc) in rows.flatten() {
+            map.insert(path, doc);
         }
         map
     };
@@ -108,37 +108,32 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
             let processed_ref = &processed_files;
             let errors_ref = &process_errors;
             let queue_ref = &queue;
-            threads.push(s.spawn(move || {
-                loop {
-                    let task = queue_ref
-                        .lock()
-                        .expect("index queue poisoned")
-                        .pop_front();
-                    let Some((relative_path, abs_path, metadata)) = task else {
-                        break;
-                    };
-                    match std::fs::read_to_string(&abs_path) {
-                        Ok(content) => {
-                            let content = crate::ai_provider::redact_secrets(&content);
-                            let language = detect_language_from_path(&relative_path);
-                            let mime_type = detect_mime_type(&relative_path);
-                            let content_hash = simple_hash(&content);
-                            let chunks = chunk_content(&content, &relative_path);
-                            processed_ref.lock().unwrap().push((
-                                relative_path,
-                                mime_type,
-                                language,
-                                metadata,
-                                content_hash,
-                                chunks,
-                            ));
-                        }
-                        Err(e) => {
-                            errors_ref
-                                .lock()
-                                .unwrap()
-                                .push(format!("{}: {}", relative_path, e));
-                        }
+            threads.push(s.spawn(move || loop {
+                let task = queue_ref.lock().expect("index queue poisoned").pop_front();
+                let Some((relative_path, abs_path, metadata)) = task else {
+                    break;
+                };
+                match std::fs::read_to_string(&abs_path) {
+                    Ok(content) => {
+                        let content = crate::ai_provider::redact_secrets(&content);
+                        let language = detect_language_from_path(&relative_path);
+                        let mime_type = detect_mime_type(&relative_path);
+                        let content_hash = simple_hash(&content);
+                        let chunks = chunk_content(&content, &relative_path);
+                        processed_ref.lock().unwrap().push((
+                            relative_path,
+                            mime_type,
+                            language,
+                            metadata,
+                            content_hash,
+                            chunks,
+                        ));
+                    }
+                    Err(e) => {
+                        errors_ref
+                            .lock()
+                            .unwrap()
+                            .push(format!("{}: {}", relative_path, e));
                     }
                 }
             }));
@@ -471,11 +466,15 @@ const INDEXABLE_EXTENSIONS: &[&str] = &[
 ];
 
 fn should_index(path: &Path) -> bool {
+    if crate::security::is_sensitive_path(path) {
+        return false;
+    }
     // Check directory components
     for component in path.components() {
         if let std::path::Component::Normal(os_str) = component {
             if let Some(s) = os_str.to_str() {
-                if EXCLUDED_DIRS.contains(&s) {
+                let normalized = s.to_lowercase();
+                if EXCLUDED_DIRS.contains(&normalized.as_str()) {
                     return false;
                 }
             }
@@ -539,7 +538,10 @@ fn should_index(path: &Path) -> bool {
     }
 }
 
-fn collect_indexable_files(root: &Path) -> Vec<(String, String)> {
+fn collect_indexable_files(
+    root: &Path,
+    policy_root: Option<&crate::models::WorkspaceRoot>,
+) -> Vec<(String, String)> {
     let mut result = Vec::new();
     let mut visited = HashSet::new();
 
@@ -551,11 +553,17 @@ fn collect_indexable_files(root: &Path) -> Vec<(String, String)> {
             if path == root {
                 return true;
             }
+            if crate::security::is_sensitive_path(path)
+                || policy_root.is_some_and(|policy| crate::security::is_excluded(path, policy))
+            {
+                return false;
+            }
             if path.is_dir() {
                 for component in path.components() {
                     if let std::path::Component::Normal(os_str) = component {
                         if let Some(s) = os_str.to_str() {
-                            if EXCLUDED_DIRS.contains(&s) {
+                            let normalized = s.to_lowercase();
+                            if EXCLUDED_DIRS.contains(&normalized.as_str()) {
                                 return false;
                             }
                         }
@@ -600,8 +608,6 @@ fn collect_indexable_files(root: &Path) -> Vec<(String, String)> {
 
     result
 }
-
-
 
 fn remove_stale_documents(
     repo_id: &str,

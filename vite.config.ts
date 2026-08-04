@@ -9,11 +9,12 @@ export default defineConfig(async () => ({
   plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   clearScreen: false,
   test: {
+    environment: "jsdom",
     exclude: ["e2e/**", "node_modules/**"],
   },
   server: {

@@ -31,6 +31,7 @@ pub const MIGRATION_014_SQL: &str = include_str!("../migrations/014_trusted_exec
 pub const MIGRATION_015_SQL: &str = include_str!("../migrations/015_incremental_index.sql");
 pub const MIGRATION_016_SQL: &str = include_str!("../migrations/016_security_wording.sql");
 pub const MIGRATION_017_SQL: &str = include_str!("../migrations/017_fts_trigger_cleanup.sql");
+pub const MIGRATION_018_SQL: &str = include_str!("../migrations/018_asset_availability.sql");
 
 pub struct Db {
     pub conn: Mutex<Connection>,
@@ -44,7 +45,9 @@ impl Db {
             fs::create_dir_all(parent)?;
         }
         let mut conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+        )?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         if integrity != "ok" {
             return Err(DbError::Integrity(integrity));
@@ -68,6 +71,7 @@ impl Db {
             MIGRATION_015_SQL,
             MIGRATION_016_SQL,
             MIGRATION_017_SQL,
+            MIGRATION_018_SQL,
         ];
 
         // Track applied migrations
@@ -117,7 +121,9 @@ impl Db {
     /// This allows concurrent readers and writers in WAL mode without locking the main conn Mutex.
     pub fn connection(&self) -> Result<Connection, rusqlite::Error> {
         let conn = Connection::open(&self.path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+        )?;
         Ok(conn)
     }
 }
@@ -185,7 +191,7 @@ mod tests {
             let applied: i64 = conn
                 .query_row("SELECT COUNT(*) FROM _migration", [], |row| row.get(0))
                 .unwrap();
-            assert_eq!(applied, 17);
+            assert_eq!(applied, 18);
         }
         drop(db);
 
@@ -194,7 +200,7 @@ mod tests {
         let applied: i64 = conn
             .query_row("SELECT COUNT(*) FROM _migration", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(applied, 17);
+        assert_eq!(applied, 18);
     }
 
     #[test]

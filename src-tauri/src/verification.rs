@@ -247,6 +247,7 @@ pub fn resolve_command(
         })
 }
 
+#[cfg(test)]
 pub fn ensure_automatic_command_allowed(command: &VerificationCommand) -> Result<(), String> {
     if command.requires_approval {
         return Err(format!(
@@ -660,7 +661,6 @@ mod tests {
         assert!(!result.stdout.is_empty());
         assert!(result.stdout.len() <= MAX_CAPTURE_BYTES);
     }
-
 
     #[test]
     fn cancellation_stops_a_running_command() {

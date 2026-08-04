@@ -268,16 +268,24 @@ pub async fn run_batch_verification_cmd(
     if approval_ids.len() != commands.len() {
         return Err("Each verification command requires its own approval".into());
     }
-    for (command, approval_id) in commands.iter().zip(&approval_ids) {
-        let context_hash = permissions::verification_context_hash(&cwd, command)?;
-        permissions::consume_request(
-            approval_id,
-            "shell.verify",
-            Some(&resolved_repo_id),
-            &context_hash,
-            &state.db,
-        )?;
-    }
+    let contexts = commands
+        .iter()
+        .map(|command| permissions::verification_context_hash(&cwd, command))
+        .collect::<Result<Vec<_>, _>>()?;
+    let approvals = commands
+        .iter()
+        .zip(&approval_ids)
+        .zip(&contexts)
+        .map(|((_, approval_id), context_hash)| {
+            (
+                approval_id.as_str(),
+                "shell.verify",
+                Some(resolved_repo_id.as_str()),
+                context_hash.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    permissions::consume_requests(&approvals, &state.db)?;
     let job_id = job_engine::create_job(
         "verification_batch",
         &serde_json::json!({

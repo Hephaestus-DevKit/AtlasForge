@@ -203,19 +203,20 @@ pub fn update_progress(job_id: &str, progress: i32, total: i32, db: &Db) -> Resu
 pub fn fail_job(job_id: &str, error: &str, db: &Db) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let changed = conn.execute(
-        "UPDATE job SET status = 'failed', error_message = ?1, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?2 AND status != 'cancelled'",
+        "UPDATE job SET status = 'failed', error_message = ?1, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?2 AND status IN ('pending', 'running')",
         rusqlite::params![error, job_id],
     )
     .map_err(|e| e.to_string())?;
     drop(conn);
-    if changed > 0 {
-        append_job_event(
-            job_id,
-            "job_failed",
-            &serde_json::json!({"error": error}).to_string(),
-            db,
-        )?;
+    if changed == 0 {
+        return Err("Job is not pending or running and cannot be failed".into());
     }
+    append_job_event(
+        job_id,
+        "job_failed",
+        &serde_json::json!({"error": error}).to_string(),
+        db,
+    )?;
     Ok(())
 }
 
@@ -223,14 +224,52 @@ pub fn fail_job(job_id: &str, error: &str, db: &Db) -> Result<(), String> {
 pub fn complete_job(job_id: &str, db: &Db) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let changed = conn.execute(
-        "UPDATE job SET status = 'completed', progress = progress_total, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?1 AND status != 'cancelled'",
+        "UPDATE job SET status = 'completed', progress = progress_total, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?1 AND status = 'running'",
         rusqlite::params![job_id],
     )
     .map_err(|e| e.to_string())?;
     drop(conn);
-    if changed > 0 {
-        append_job_event(job_id, "job_completed", "{}", db)?;
+    if changed == 0 {
+        return Err("Job is not running and cannot be completed".into());
     }
+    append_job_event(job_id, "job_completed", "{}", db)?;
+    Ok(())
+}
+
+/// Finalize a job whose durable mutation already succeeded. A cancellation may
+/// race with the last non-interruptible write, so this transition also accepts
+/// `cancelled` and records that the commit won the race.
+pub fn complete_committed_job(job_id: &str, db: &Db) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let previous_status: String = conn
+        .query_row(
+            "SELECT status FROM job WHERE id = ?1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if previous_status != "running" && previous_status != "cancelled" {
+        return Err(format!(
+            "Job with status '{}' cannot finalize a committed mutation",
+            previous_status
+        ));
+    }
+    conn.execute(
+        "UPDATE job SET status = 'completed', progress = progress_total, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?1 AND status IN ('running', 'cancelled')",
+        rusqlite::params![job_id],
+    )
+    .map_err(|e| e.to_string())?;
+    drop(conn);
+    append_job_event(
+        job_id,
+        if previous_status == "cancelled" {
+            "job_completed_after_cancel_race"
+        } else {
+            "job_completed"
+        },
+        "{}",
+        db,
+    )?;
     Ok(())
 }
 
@@ -365,6 +404,29 @@ mod tests {
         let job = load_job(&job_id, &db).unwrap();
         assert_eq!(job.status, "completed");
         assert!(job.completed_at.is_some());
+    }
+
+    #[test]
+    fn committed_mutation_wins_cancellation_race() {
+        let db = test_db();
+        let runtime = JobRuntime::default();
+        let job_id = create_job("patch_apply", "{}", &db).unwrap();
+        begin_job(&job_id, &db, &runtime).unwrap();
+        cancel_job(&job_id, &db, &runtime).unwrap();
+
+        complete_committed_job(&job_id, &db).unwrap();
+
+        let job = load_job(&job_id, &db).unwrap();
+        assert_eq!(job.status, "completed");
+        let conn = db.conn.lock().unwrap();
+        let event_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM job_event WHERE job_id = ?1 AND type = 'job_completed_after_cancel_race'",
+                rusqlite::params![job_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(event_count, 1);
     }
 
     #[test]

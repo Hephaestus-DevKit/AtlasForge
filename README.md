@@ -6,7 +6,7 @@
 
 AtlasForge 是一个面向 Windows 的本地优先多仓库工程工作台。它使用 Tauri 2、Rust、React 和 SQLite，在可信的本机边界内完成仓库发现、工程画像、健康审计、文本索引、验证命令和受控 AI 修复。
 
-当前版本：`0.1.0`。这是首个 alpha 版本，重点是建立可运行、可审计、可恢复的本地闭环，不代表所有规划能力都已完成。
+当前版本：`0.1.1`。这是安全与可靠性稳定化 alpha，重点是可运行、可审计、可恢复的本地闭环，不代表所有规划能力都已完成。
 
 [打开 Web Demo](https://hephaestus-devkit.github.io/AtlasForge/)
 
@@ -14,7 +14,7 @@ AtlasForge 是一个面向 Windows 的本地优先多仓库工程工作台。它
 
 ## 当前能力
 
-| 领域 | 0.1.0 状态 |
+| 领域 | 0.1.1 状态 |
 | --- | --- |
 | 工作区 | 校验 include/exclude glob，发现并画像多个 Git 仓库，有界并行扫描 |
 | 审计与索引 | 确定性工程规则、健康快照、增量文本索引、敏感信息脱敏、全文检索 |
@@ -22,9 +22,9 @@ AtlasForge 是一个面向 Windows 的本地优先多仓库工程工作台。它
 | 验证 | 从项目清单检测命令；批准后隔离执行，限制输出并记录证据 |
 | AI 修复 | Provider 探测、上下文预览、修复计划、单文件补丁提案、批准、验证和哈希保护回滚 |
 | GitHub | 读取并缓存 Actions、Pull Request 和 Release 信息；写操作默认关闭 |
-| Tool Broker | 仅开放已实现的 `fs.list`、`fs.read`、`git.status`、`git.diff`、`shell.verify` |
+| Tool Broker | 仅开放已实现的 `fs.list`、`fs.read`、`git.status`、`git.diff`；验证命令走独立审批执行入口 |
 
-完整状态和非目标以 [能力矩阵](docs/13-capability-matrix.md) 为准。GitHub 写操作、自动更新器、正式安装包发布、向量检索和无人值守修改不属于 0.1.0 的已交付范围。
+完整状态和非目标以 [能力矩阵](docs/13-capability-matrix.md) 为准。GitHub 写操作、自动更新器、正式安装包发布、向量检索和无人值守修改不属于 0.1.x 的已交付范围。
 
 ## 安全边界
 
@@ -43,7 +43,7 @@ AtlasForge 是一个面向 Windows 的本地优先多仓库工程工作台。它
 ### 环境要求
 
 - Windows 10/11 x64
-- Node.js `>= 20.19`
+- Node.js 24 LTS
 - Rust stable，目标 `x86_64-pc-windows-msvc`
 - Visual Studio Build Tools 2022，安装“使用 C++ 的桌面开发”工作负载
 
@@ -95,7 +95,7 @@ AtlasForge/
 └─ .github/workflows/          Windows CI 与 GitHub Pages
 ```
 
-分层原则：页面负责交互编排；`src/features` 承载领域 UI；`src/api` 是唯一前端 IPC 边界；Rust `commands` 只做命令编排，扫描器、索引器、验证器、GitHub、AI Provider、权限和工作区逻辑分别放在独立模块中。阻塞型文件系统、Git 和数据库任务不占用 Tauri 异步运行时。
+分层原则：页面负责交互编排；`src/features` 承载领域 UI；`src/api` 是唯一前端 IPC 边界；Rust `commands` 只做命令编排，扫描器、索引器、验证器、GitHub、AI Provider、权限和工作区逻辑分别放在独立模块中。长时间文件系统、Git 和验证任务通过阻塞工作线程执行，自动化调度由可信 Rust 生命周期托管。
 
 ## 数据与维护
 

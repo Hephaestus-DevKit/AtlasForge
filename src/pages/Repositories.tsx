@@ -1,11 +1,11 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import {
   listRepositorySummaries, getRepoProfile, refreshProfiles,
   auditRepo, getHealthSnapshot, getFindings,
   resolveGitHubRepo, getGitHubIntegration, syncGitHub, getGitHubEvidence,
   detectCommands, runVerification, runBatchVerification, listVerificationRuns,
   listPatchProposals, applyPatch, rejectPatch, rollbackPatch,
-  requestVerificationApproval, requestPatchApproval, decidePermissionRequest,
+  requestVerificationApproval, requestPatchApproval, requestRollbackApproval, decidePermissionRequest,
   reindexRepo,
   generateFixPlan, proposeFix, listFixPlans,
   listAiProviders, previewFixPlanContext,
@@ -48,9 +48,10 @@ interface Toast {
 }
 
 type PendingApprovalAction =
-  | { kind: "verification"; command: VerificationCommand }
-  | { kind: "batch"; commands: VerificationCommand[] }
-  | { kind: "patch"; proposalId: string };
+  | { kind: "verification"; repoId: string; cwd: string; command: VerificationCommand }
+  | { kind: "batch"; repoId: string; cwd: string; commands: VerificationCommand[] }
+  | { kind: "patch"; repoId: string; proposalId: string }
+  | { kind: "rollback"; repoId: string; proposalId: string };
 
 let toastCounter = 0;
 
@@ -112,6 +113,7 @@ export function Repositories() {
   const [approvalRequests, setApprovalRequests] = useState<PermissionRequest[]>([]);
   const [approvalAction, setApprovalAction] = useState<PendingApprovalAction | null>(null);
   const [approvalBusy, setApprovalBusy] = useState(false);
+  const detailRequestRef = useRef(0);
 
   // Profiles cache for filter/sort
   const [profileCache, setProfileCache] = useState<Record<string, RepoProfile | null>>({});
@@ -147,6 +149,7 @@ export function Repositories() {
   }
 
   async function handleSelectRepo(repoId: string) {
+    detailRequestRef.current += 1;
     if (selectedRepoId === repoId) {
       setSelectedRepoId(null);
       setProfile(null);
@@ -181,41 +184,71 @@ export function Repositories() {
   }
 
   async function loadTabData(repoId: string, tab: DetailTab) {
+    const requestId = ++detailRequestRef.current;
+    const isCurrent = () => detailRequestRef.current === requestId;
     try {
       switch (tab) {
         case "overview":
-        case "profile":
-          setProfile(await getRepoProfile(repoId));
+        case "profile": {
+          const nextProfile = await getRepoProfile(repoId);
+          if (isCurrent()) {
+            setProfile(nextProfile);
+            setProfileCache((current) => ({ ...current, [repoId]: nextProfile }));
+          }
           break;
+        }
         case "audit": {
           const snap = await getHealthSnapshot(repoId);
-          setSnapshot(snap);
-          if (snap) setFindings(await getFindings(snap.id));
+          const nextFindings = snap ? await getFindings(snap.id) : [];
+          if (isCurrent()) {
+            setSnapshot(snap);
+            setFindings(nextFindings);
+          }
           break;
         }
         case "github":
           try {
             const resolved = await getGitHubIntegration(repoId)
               ?? await resolveGitHubRepo(repoId);
-            setIntegration(resolved);
-            setGitHubEvidence(await getGitHubEvidence(repoId));
+            const evidence = await getGitHubEvidence(repoId);
+            if (isCurrent()) {
+              setIntegration(resolved);
+              setGitHubEvidence(evidence);
+            }
           } catch {
-            setIntegration(null);
-            setGitHubEvidence(null);
+            if (isCurrent()) {
+              setIntegration(null);
+              setGitHubEvidence(null);
+            }
           }
           break;
         case "verify": {
           const repo = repos.find(r => r.id === repoId);
-          if (repo) setCommands(await detectCommands(repo.worktreePath));
-          try { setVerifyRuns(await listVerificationRuns(repoId)); } catch { setVerifyRuns([]); }
+          const nextCommands = repo ? await detectCommands(repo.worktreePath) : [];
+          let nextRuns: VerificationRun[] = [];
+          try { nextRuns = await listVerificationRuns(repoId); } catch { /* use empty history */ }
+          if (isCurrent()) {
+            setCommands(nextCommands);
+            setVerifyRuns(nextRuns);
+          }
           break;
         }
-        case "patches":
-          setPatches(await listPatchProposals(repoId));
+        case "patches": {
+          const nextPatches = await listPatchProposals(repoId);
+          if (isCurrent()) setPatches(nextPatches);
           break;
+        }
         case "fixes": {
-          try { setFixPlans(await listFixPlans(repoId)); } catch { setFixPlans([]); }
-          try { setAiProviders(await listAiProviders()); } catch { setAiProviders([]); }
+          const [plansResult, providersResult, snapResult] = await Promise.allSettled([
+            listFixPlans(repoId),
+            listAiProviders(),
+            getHealthSnapshot(repoId),
+          ]);
+          if (isCurrent()) {
+            setFixPlans(plansResult.status === "fulfilled" ? plansResult.value : []);
+            setAiProviders(providersResult.status === "fulfilled" ? providersResult.value : []);
+            setSnapshot(snapResult.status === "fulfilled" ? snapResult.value : null);
+          }
           break;
         }
       }
@@ -234,8 +267,11 @@ export function Repositories() {
       setRefreshing(true);
       setError(null);
       const count = await refreshProfiles();
+      await loadRepos();
       if (selectedRepoId) {
-        setProfile(await getRepoProfile(selectedRepoId));
+        const nextProfile = await getRepoProfile(selectedRepoId);
+        setProfile(nextProfile);
+        setProfileCache((current) => ({ ...current, [selectedRepoId]: nextProfile }));
       }
       showToast(`Refreshed ${count} profiles`, "success");
     } catch (e: any) {
@@ -283,7 +319,7 @@ export function Repositories() {
         cmd.command,
       );
       setApprovalRequests([request]);
-      setApprovalAction({ kind: "verification", command: cmd });
+      setApprovalAction({ kind: "verification", repoId: selectedRepo.id, cwd: selectedRepo.worktreePath, command: cmd });
     } catch (e: any) {
       setError(e?.toString() ?? "Could not prepare verification approval");
     }
@@ -307,17 +343,18 @@ export function Repositories() {
         ),
       );
       setApprovalRequests(requests);
-      setApprovalAction({ kind: "batch", commands: selectedCommands });
+      setApprovalAction({ kind: "batch", repoId: selectedRepo.id, cwd: selectedRepo.worktreePath, commands: selectedCommands });
     } catch (e: any) {
       setError(e?.toString() ?? "Could not prepare batch approval");
     }
   }
 
   async function handleApplyPatch(id: string) {
+    if (!selectedRepo) return;
     try {
       const request = await requestPatchApproval(id);
       setApprovalRequests([request]);
-      setApprovalAction({ kind: "patch", proposalId: id });
+      setApprovalAction({ kind: "patch", repoId: selectedRepo.id, proposalId: id });
     } catch (e: any) {
       setError(e?.toString() ?? "Could not prepare patch approval");
       showToast("Patch approval could not be prepared", "error");
@@ -334,7 +371,12 @@ export function Repositories() {
   }
 
   async function approvePendingAction() {
-    if (!approvalAction || !selectedRepo) return;
+    if (!approvalAction) return;
+    const targetRepo = repos.find((repo) => repo.id === approvalAction.repoId);
+    if (!targetRepo) {
+      setError("The repository for this approval is no longer available");
+      return;
+    }
     setApprovalBusy(true);
     try {
       const approved = await Promise.all(
@@ -345,26 +387,30 @@ export function Repositories() {
         setVerifyResult(null);
         const result = await runVerification(
           approvalAction.command.command,
-          selectedRepo.worktreePath,
-          selectedRepo.id,
+          approvalAction.cwd,
+          approvalAction.repoId,
           approved[0].id,
         );
         setVerifyResult(result);
-        setVerifyRuns(await listVerificationRuns(selectedRepo.id));
+        setVerifyRuns(await listVerificationRuns(approvalAction.repoId));
       } else if (approvalAction.kind === "batch") {
         setBatchRunning(true);
         await runBatchVerification(
           approvalAction.commands,
-          selectedRepo.worktreePath,
-          selectedRepo.id,
+          approvalAction.cwd,
+          approvalAction.repoId,
           approved.map((request) => request.id),
         );
-        setVerifyRuns(await listVerificationRuns(selectedRepo.id));
+        setVerifyRuns(await listVerificationRuns(approvalAction.repoId));
         showToast(`Batch verification complete (${approvalAction.commands.length} commands)`, "success");
-      } else {
+      } else if (approvalAction.kind === "patch") {
         await applyPatch(approvalAction.proposalId, approved[0].id);
-        setPatches(await listPatchProposals(selectedRepo.id));
+        setPatches(await listPatchProposals(approvalAction.repoId));
         showToast("Patch applied after isolated verification", "success");
+      } else {
+        await rollbackPatch(approvalAction.proposalId, approved[0].id);
+        setPatches(await listPatchProposals(approvalAction.repoId));
+        showToast("Patch rolled back after approval", "success");
       }
       setApprovalRequests([]);
       setApprovalAction(null);
@@ -384,8 +430,15 @@ export function Repositories() {
   }
 
   async function handleRollbackPatch(id: string) {
-    try { await rollbackPatch(id); if (selectedRepoId) setPatches(await listPatchProposals(selectedRepoId)); showToast("Patch rolled back", "info"); }
-    catch (e: any) { setError(e?.toString() ?? "Rollback failed"); showToast("Rollback failed", "error"); }
+    if (!selectedRepo) return;
+    try {
+      const request = await requestRollbackApproval(id);
+      setApprovalRequests([request]);
+      setApprovalAction({ kind: "rollback", repoId: selectedRepo.id, proposalId: id });
+    } catch (e: any) {
+      setError(e?.toString() ?? "Could not prepare rollback approval");
+      showToast("Rollback approval could not be prepared", "error");
+    }
   }
 
   async function handleReindex() {
@@ -551,7 +604,9 @@ export function Repositories() {
   }
 
   const selectedRepo = repos.find((r) => r.id === selectedRepoId);
-  const selectedProfile = (selectedRepoId ? profileCache[selectedRepoId] : null) ?? profile;
+  const selectedProfile = profile?.repoId === selectedRepoId
+    ? profile
+    : (selectedRepoId ? profileCache[selectedRepoId] : null);
 
   const tabs: { key: DetailTab; label: string; icon: any }[] = [
     { key: "overview", label: "Overview", icon: Activity },
@@ -669,6 +724,14 @@ export function Repositories() {
                   <tr
                     key={repo.id}
                     onClick={() => handleSelectRepo(repo.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        void handleSelectRepo(repo.id);
+                      }
+                    }}
+                    tabIndex={0}
+                    aria-selected={selectedRepoId === repo.id}
                     style={{
                       borderBottom: "1px solid var(--border-color)",
                       background: selectedRepoId === repo.id ? "rgba(99, 102, 241, 0.08)" : "transparent",
@@ -769,10 +832,13 @@ export function Repositories() {
               </div>
 
               {/* Tabs */}
-              <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", overflow: "auto" }}>
+              <div role="tablist" aria-label="Repository details" style={{ display: "flex", borderBottom: "1px solid var(--border-color)", overflow: "auto" }}>
                 {tabs.map((tab) => (
                   <button
                     key={tab.key}
+                    role="tab"
+                    aria-selected={activeTab === tab.key}
+                    aria-controls="repository-tab-panel"
                     onClick={() => handleTabChange(tab.key)}
                     style={{
                       display: "flex", alignItems: "center", gap: 4,
@@ -789,7 +855,7 @@ export function Repositories() {
               </div>
 
               {/* Tab Content */}
-              <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
+              <div id="repository-tab-panel" role="tabpanel" style={{ padding: 16, overflow: "auto", flex: 1 }}>
                 {activeTab === "overview" && (
                   <OverviewTab
                     profile={selectedProfile}

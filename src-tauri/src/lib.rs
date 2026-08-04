@@ -9,6 +9,7 @@ mod indexer;
 mod job_engine;
 mod models;
 mod permissions;
+mod process_runner;
 mod profiler;
 mod scanner;
 mod security;
@@ -28,14 +29,34 @@ pub fn run() {
             let db_path = get_db_path(app.handle())?;
             migrate_legacy_database(&db_path)?;
             let db = db::Db::new(&db_path).map_err(std::io::Error::other)?;
+            let recovered_patches =
+                ai_fix::recover_interrupted_patch_operations(&db).map_err(std::io::Error::other)?;
+            if recovered_patches > 0 {
+                log::warn!(
+                    "Reconciled {} interrupted patch operations",
+                    recovered_patches
+                );
+            }
             let recovered =
                 job_engine::recover_interrupted_jobs(&db).map_err(std::io::Error::other)?;
             if recovered > 0 {
                 log::warn!("Marked {} interrupted jobs as failed", recovered);
             }
             log::info!("Database initialized at {:?}", db_path);
+            let db = Arc::new(db);
+            let scheduler_db = db.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    interval.tick().await;
+                    if let Err(error) = automations::tick_scheduler(&scheduler_db) {
+                        log::warn!("Automation scheduler tick failed: {}", error);
+                    }
+                }
+            });
             app.manage(AppState {
-                db: Arc::new(db),
+                db,
                 jobs: Arc::new(job_engine::JobRuntime::default()),
             });
             Ok(())
@@ -63,6 +84,7 @@ pub fn run() {
             commands::get_job_detail,
             commands::request_verification_approval_cmd,
             commands::request_patch_approval_cmd,
+            commands::request_rollback_approval_cmd,
             commands::decide_permission_request_cmd,
             commands::list_permission_requests_cmd,
             // Tool broker

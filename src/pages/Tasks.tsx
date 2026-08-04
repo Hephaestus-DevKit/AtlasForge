@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listJobs, getJobEvents, cancelJob, retryJob, listArtifacts, listAuditLog } from "../api/ipc";
 import type { Job, JobEvent, Artifact, AuditEntry } from "../types";
 import { ListTodo, ChevronDown, ChevronRight, RotateCcw, Package, Clock, AlertTriangle, CheckCircle2, Loader2, Ban, ShieldCheck } from "lucide-react";
@@ -152,14 +152,27 @@ export function Tasks() {
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const loadInFlight = useRef(false);
 
   useEffect(() => {
-    loadJobs();
-    const interval = window.setInterval(loadJobs, 2000);
-    return () => window.clearInterval(interval);
+    let stopped = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      await loadJobs();
+      if (!stopped) {
+        timer = window.setTimeout(poll, document.hidden ? 15_000 : 3_000);
+      }
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, []);
 
   async function loadJobs() {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
     try {
       setError(null);
       const [jobList, auditLog] = await Promise.all([
@@ -170,6 +183,8 @@ export function Tasks() {
       setAuditEntries(auditLog);
     } catch (e: any) {
       setError(e?.toString() ?? "Failed to load jobs");
+    } finally {
+      loadInFlight.current = false;
     }
   }
 

@@ -102,7 +102,18 @@ pub fn create_patch_proposal(proposal: &PatchProposal, db: &Db) -> Result<(), St
 }
 
 /// Approve and apply a patch proposal.
+#[cfg(test)]
 pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> {
+    let cancellation = std::sync::atomic::AtomicBool::new(false);
+    apply_patch_cancellable(proposal_id, db, &cancellation)
+}
+
+/// Apply a patch while honoring cancellation until the user worktree mutation begins.
+pub fn apply_patch_cancellable(
+    proposal_id: &str,
+    db: &Db,
+    cancellation: &std::sync::atomic::AtomicBool,
+) -> Result<PatchProposal, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Load proposal
@@ -153,6 +164,8 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
         );
     }
     let base_file_hash = crate::permissions::hash_text_file(&target_path)?;
+    let backup_content = std::fs::read_to_string(&target_path)
+        .map_err(|error| format!("Cannot create patch backup: {error}"))?;
     let approval_context_hash = crate::permissions::hash_text(&format!(
         "{}\n{}\n{}\n{}",
         repo_path,
@@ -169,7 +182,7 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
     )
     .map_err(|error| format!("Cannot create isolated patch worktree: {}", error))?;
 
-    let isolated_result = (|| -> Result<Option<String>, String> {
+    let isolated_result = (|| -> Result<(Option<String>, String), String> {
         link_dependency_cache(&repo_path, &sandbox_path)?;
         run_git_apply(&sandbox_path, &patch_content, &["--check"])?;
         run_git_apply(&sandbox_path, &patch_content, &[])?;
@@ -182,7 +195,9 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
         {
             return Err("Patch verification failed in the isolated worktree; the user worktree was not modified".into());
         }
-        Ok(verification)
+        let sandbox_target = resolve_existing_repo_file(&sandbox_path, &patch_path)?;
+        let expected_applied_hash = crate::permissions::hash_text_file(&sandbox_target)?;
+        Ok((verification, expected_applied_hash))
     })();
     let cleanup_result = run_git(
         &repo_path,
@@ -196,7 +211,11 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
             error
         );
     }
-    let verification_json = isolated_result?;
+    let (verification_json, expected_applied_hash) = isolated_result?;
+
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Patch application cancelled before the user worktree was modified".into());
+    }
 
     let current_head = run_git_output(&repo_path, &["rev-parse", "HEAD"])?;
     let current_status = run_git_output(&repo_path, &["status", "--porcelain"])?;
@@ -211,50 +230,103 @@ pub fn apply_patch(proposal_id: &str, db: &Db) -> Result<PatchProposal, String> 
         );
     }
 
+    // Persist recovery metadata and the mutation intent before touching the user
+    // worktree. Startup recovery can now distinguish not-applied, applied, and
+    // drifted states after a crash.
+    {
+        let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE patch_proposal
+             SET verification_result = ?1, base_head_sha = ?2, base_file_hash = ?3,
+                 applied_file_hash = ?4, backup_content = ?5, approval_context_hash = ?6
+             WHERE id = ?7 AND status IN ('proposed', 'approved')",
+            rusqlite::params![
+                verification_json,
+                base_head,
+                base_file_hash,
+                expected_applied_hash,
+                backup_content,
+                approval_context_hash,
+                proposal_id,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO audit_log (id, action, subject, scope, capability, risk_level, detail)
+             VALUES (?1, 'patch_apply_prepared', ?2, ?3, 'fs.write_patch', 'high', ?4)",
+            rusqlite::params![
+                uuid::Uuid::new_v4().to_string(),
+                format!("repo:{}", proposal.repo_id),
+                proposal.file_path,
+                serde_json::json!({"proposalId": proposal_id, "baseHead": base_head}).to_string(),
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Patch application cancelled before the user worktree was modified".into());
+    }
     run_git_apply(&repo_path, &patch_content, &["--check"])
         .map_err(|error| format!("Patch no longer applies cleanly: {}", error))?;
     run_git_apply(&repo_path, &patch_content, &[])
         .map_err(|error| format!("Patch apply failed: {}", error))?;
     let applied_file_hash = crate::permissions::hash_text_file(&target_path)?;
+    if applied_file_hash != expected_applied_hash {
+        let _ = run_git_apply(&repo_path, &patch_content, &["-R"]);
+        return Err("Applied patch hash did not match the isolated verification result; a compensating rollback was attempted".into());
+    }
     let now = chrono::Utc::now().to_rfc3339();
 
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE patch_proposal
-         SET status = 'applied', applied_at = ?1, verification_result = ?2,
-             base_head_sha = ?3, base_file_hash = ?4, applied_file_hash = ?5,
-             backup_content = ?6, approval_context_hash = ?7
-         WHERE id = ?8",
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let changed = tx
+        .execute(
+            "UPDATE patch_proposal
+         SET status = 'applied', applied_at = ?1
+         WHERE id = ?2 AND status IN ('proposed', 'approved') AND applied_file_hash = ?3",
+            rusqlite::params![now, proposal_id, applied_file_hash,],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed != 1 {
+        drop(tx);
+        drop(conn);
+        let compensated = run_git_apply(&repo_path, &patch_content, &["-R"]).is_ok()
+            && crate::permissions::hash_text_file(&target_path)
+                .ok()
+                .as_deref()
+                == Some(base_file_hash.as_str());
+        return Err(format!(
+            "Patch state could not be finalized after the file changed; compensating rollback {}",
+            if compensated {
+                "succeeded"
+            } else {
+                "failed and startup recovery is required"
+            }
+        ));
+    }
+    tx.execute(
+        "INSERT INTO audit_log (id, action, subject, scope, capability, risk_level, detail)
+         VALUES (?1, 'patch_applied', ?2, ?3, 'fs.write_patch', 'high', ?4)",
         rusqlite::params![
-            now,
-            verification_json,
-            base_head,
-            base_file_hash,
-            applied_file_hash,
-            Option::<String>::None,
-            approval_context_hash,
-            proposal_id,
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-    drop(conn);
-
-    write_audit_log(
-        db,
-        "patch_applied",
-        &format!("repo:{}", proposal.repo_id),
-        "fs.write_patch",
-        "high",
-        &serde_json::json!({
+            uuid::Uuid::new_v4().to_string(),
+            format!("repo:{}", proposal.repo_id),
+            proposal.file_path,
+            serde_json::json!({
             "proposalId": proposal_id,
             "filePath": proposal.file_path,
             "baseHead": base_head,
             "baseFileHash": base_file_hash,
             "appliedFileHash": applied_file_hash,
             "isolatedVerification": verification_json.is_some(),
-        })
-        .to_string(),
-    )?;
+            })
+            .to_string(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
 
     let mut applied = proposal;
     applied.status = "applied".into();
@@ -286,18 +358,30 @@ pub fn reject_patch(proposal_id: &str, reason: &str, db: &Db) -> Result<(), Stri
 }
 
 /// Roll back an applied patch.
+#[cfg(test)]
 pub fn rollback_patch(proposal_id: &str, db: &Db) -> Result<(), String> {
+    let cancellation = std::sync::atomic::AtomicBool::new(false);
+    rollback_patch_cancellable(proposal_id, db, &cancellation)
+}
+
+/// Roll back a patch while honoring cancellation until restoration begins.
+pub fn rollback_patch_cancellable(
+    proposal_id: &str,
+    db: &Db,
+    cancellation: &std::sync::atomic::AtomicBool,
+) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    let (repo_id, file_path, patch_content, base_file_hash, applied_file_hash): (
+    let (repo_id, file_path, patch_content, base_file_hash, applied_file_hash, backup_content): (
         String,
         String,
         String,
+        Option<String>,
         Option<String>,
         Option<String>,
     ) = conn
         .query_row(
-            "SELECT repo_id, file_path, patch_content, base_file_hash, applied_file_hash
+            "SELECT repo_id, file_path, patch_content, base_file_hash, applied_file_hash, backup_content
          FROM patch_proposal WHERE id = ?1 AND status = 'applied'",
             rusqlite::params![proposal_id],
             |row| {
@@ -307,6 +391,7 @@ pub fn rollback_patch(proposal_id: &str, db: &Db) -> Result<(), String> {
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
@@ -330,36 +415,162 @@ pub fn rollback_patch(proposal_id: &str, db: &Db) -> Result<(), String> {
         );
     }
     validate_patch_paths(&patch_content, Some(&file_path))?;
+    write_audit_log(
+        db,
+        "patch_rollback_prepared",
+        &format!("repo:{}", repo_id),
+        "fs.write_patch",
+        "high",
+        &serde_json::json!({"proposalId": proposal_id, "filePath": file_path}).to_string(),
+    )?;
+    if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Patch rollback cancelled before the user worktree was modified".into());
+    }
     run_git_apply(&repo_path, &patch_content, &["--check", "-R"])
         .map_err(|error| format!("Rollback validation failed: {}", error))?;
-    run_git_apply(&repo_path, &patch_content, &["-R"])
-        .map_err(|error| format!("Rollback failed: {}", error))?;
+    if let Err(reverse_error) = run_git_apply(&repo_path, &patch_content, &["-R"]) {
+        let backup = backup_content.as_deref().ok_or_else(|| {
+            format!("Rollback failed and no backup is available: {reverse_error}")
+        })?;
+        std::fs::write(&target_path, backup).map_err(|error| {
+            format!("Rollback and backup restoration failed: {reverse_error}; {error}")
+        })?;
+    }
     let restored_hash = crate::permissions::hash_text_file(&target_path)?;
     if restored_hash != expected_base_hash {
         return Err("Rollback integrity check failed after restoring the backup".into());
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE patch_proposal SET status = 'rolled_back', rolled_back_at = ?1 WHERE id = ?2",
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let changed = tx.execute(
+        "UPDATE patch_proposal SET status = 'rolled_back', rolled_back_at = ?1 WHERE id = ?2 AND status = 'applied'",
         rusqlite::params![now, proposal_id],
     )
     .map_err(|e| e.to_string())?;
-    drop(conn);
-    write_audit_log(
-        db,
-        "patch_rolled_back",
-        &format!("repo:{}", repo_id),
-        "fs.write_patch",
-        "high",
-        &serde_json::json!({
+    if changed != 1 {
+        return Err("Rollback restored the file but its proposal state could not be finalized; startup recovery will reconcile it".into());
+    }
+    tx.execute(
+        "INSERT INTO audit_log (id, action, subject, scope, capability, risk_level, detail)
+         VALUES (?1, 'patch_rolled_back', ?2, ?3, 'fs.write_patch', 'high', ?4)",
+        rusqlite::params![
+            uuid::Uuid::new_v4().to_string(),
+            format!("repo:{}", repo_id),
+            file_path,
+            serde_json::json!({
             "proposalId": proposal_id,
             "filePath": file_path,
             "restoredHash": restored_hash,
-        })
-        .to_string(),
+            })
+            .to_string(),
+        ],
     )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Reconcile patch operations interrupted between filesystem mutation and the
+/// final database transaction. Recovery only changes state when the current
+/// file hash exactly matches a stored baseline or isolated applied hash.
+pub fn recover_interrupted_patch_operations(db: &Db) -> Result<usize, String> {
+    type RecoveryCandidate = (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    );
+    let candidates: Vec<RecoveryCandidate> = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.id, p.status, r.worktree_path, p.file_path,
+                        p.base_file_hash, p.applied_file_hash
+                 FROM patch_proposal p
+                 JOIN repository r ON r.id = p.repo_id
+                 WHERE (p.status IN ('proposed', 'approved') AND p.applied_file_hash IS NOT NULL)
+                    OR p.status = 'applied'",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    let mut recovered = 0;
+    for (id, status, repo_path, file_path, base_hash, applied_hash) in candidates {
+        let target = match resolve_existing_repo_file(&repo_path, &file_path) {
+            Ok(target) => target,
+            Err(_) => continue,
+        };
+        let current_hash = match crate::permissions::hash_text_file(&target) {
+            Ok(hash) => hash,
+            Err(_) => continue,
+        };
+        let next_status = if matches!(status.as_str(), "proposed" | "approved") {
+            if applied_hash.as_deref() == Some(current_hash.as_str()) {
+                Some("applied")
+            } else if base_hash.as_deref() == Some(current_hash.as_str()) {
+                None
+            } else {
+                Some("conflict")
+            }
+        } else if status == "applied" && base_hash.as_deref() == Some(current_hash.as_str()) {
+            Some("rolled_back")
+        } else {
+            None
+        };
+        let Some(next_status) = next_status else {
+            continue;
+        };
+        let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let changed = tx
+            .execute(
+            "UPDATE patch_proposal
+             SET status = ?1,
+                 applied_at = CASE WHEN ?1 = 'applied' THEN COALESCE(applied_at, datetime('now')) ELSE applied_at END,
+                 rolled_back_at = CASE WHEN ?1 = 'rolled_back' THEN COALESCE(rolled_back_at, datetime('now')) ELSE rolled_back_at END
+             WHERE id = ?2 AND status = ?3",
+            rusqlite::params![next_status, id, status],
+        )
+        .map_err(|e| e.to_string())?;
+        if changed == 1 {
+            tx.execute(
+                "INSERT INTO audit_log (id, action, subject, scope, capability, risk_level, detail)
+                 VALUES (?1, 'patch_state_recovered', ?2, ?3, 'fs.write_patch', 'high', ?4)",
+                rusqlite::params![
+                    uuid::Uuid::new_v4().to_string(),
+                    format!("patch:{}", id),
+                    file_path,
+                    serde_json::json!({
+                        "previousStatus": status,
+                        "recoveredStatus": next_status,
+                        "currentFileHash": current_hash,
+                    })
+                    .to_string(),
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            recovered += 1;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+    Ok(recovered)
 }
 
 /// List patch proposals for a repo.
@@ -395,57 +606,40 @@ pub fn list_patch_proposals(repo_id: &str, db: &Db) -> Result<Vec<PatchProposal>
 // --- Internal helpers ---
 
 fn run_git_apply(repo_path: &str, patch_content: &str, args: &[&str]) -> Result<(), String> {
-    let mut child = std::process::Command::new("git")
-        .arg("apply")
-        .args(args)
-        .current_dir(repo_path)
-        .stdin(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to run git apply: {}", e))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin
-            .write_all(patch_content.as_bytes())
-            .map_err(|e| format!("Failed to write patch: {}", e))?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("Failed to wait for git apply: {}", e))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git apply failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    let mut git_args = vec!["apply"];
+    git_args.extend_from_slice(args);
+    let output = crate::process_runner::run_with_input(
+        "git",
+        &git_args,
+        Some(Path::new(repo_path)),
+        Some(patch_content.as_bytes()),
+        crate::process_runner::DEFAULT_TIMEOUT,
+        crate::process_runner::DEFAULT_OUTPUT_LIMIT,
+    )
+    .map_err(|e| format!("Failed to run git apply: {}", e))?;
+    if !output.success {
+        return Err(format!("git apply failed: {}", output.stderr));
     }
 
     Ok(())
 }
 
 fn run_git(repo_path: &str, args: &[&str]) -> Result<(), String> {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(repo_path)
-        .output()
+    let output = crate::process_runner::run_default("git", args, Some(Path::new(repo_path)))
         .map_err(|error| format!("Failed to run git: {}", error))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    if !output.success {
+        return Err(output.stderr.trim().to_string());
     }
     Ok(())
 }
 
 fn run_git_output(repo_path: &str, args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(repo_path)
-        .output()
+    let output = crate::process_runner::run_default("git", args, Some(Path::new(repo_path)))
         .map_err(|error| format!("Failed to run git: {}", error))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    if !output.success {
+        return Err(output.stderr.trim().to_string());
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(output.stdout.trim().to_string())
 }
 
 fn link_dependency_cache(repo_path: &str, sandbox_path: &str) -> Result<(), String> {
@@ -899,6 +1093,7 @@ pub async fn generate_fix_plan(
     provider_id: &str,
     model: Option<&str>,
     db: &Db,
+    runtime: &crate::job_engine::JobRuntime,
 ) -> Result<FixPlan, String> {
     use crate::ai_provider::{self, ContextPack};
     use crate::auditor;
@@ -1032,12 +1227,7 @@ pub async fn generate_fix_plan(
         .to_string(),
         db,
     )?;
-    crate::job_engine::append_job_event(
-        &job_id,
-        "ai_fix_plan_started",
-        &serde_json::json!({"repoId": repo_id, "snapshotId": snapshot_id}).to_string(),
-        db,
-    )?;
+    let cancellation = crate::job_engine::begin_job(&job_id, db, runtime)?;
 
     let outcome = async {
         let response = ai_provider::call_ai(&provider, &prompt, system_prompt.as_deref(), model)
@@ -1048,6 +1238,9 @@ pub async fn generate_fix_plan(
         }
         if !ai_provider::scan_for_secrets(&response.content).is_empty() {
             return Err("AI response contains potential secret material and was not stored".into());
+        }
+        if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("AI fix plan cancelled by user".into());
         }
         let plan_document = parse_fix_plan_document(&response.content)?;
         let plan_content = serde_json::to_string_pretty(&plan_document)
@@ -1114,7 +1307,12 @@ pub async fn generate_fix_plan(
 
     match outcome {
         Ok(plan) => {
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                runtime.finish(&job_id);
+                return Err("AI fix plan cancelled by user".into());
+            }
             crate::job_engine::complete_job(&job_id, db)?;
+            runtime.finish(&job_id);
             crate::job_engine::append_job_event(
                 &job_id,
                 "ai_fix_plan_completed",
@@ -1124,7 +1322,12 @@ pub async fn generate_fix_plan(
             Ok(plan)
         }
         Err(error) => {
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                runtime.finish(&job_id);
+                return Err("AI fix plan cancelled by user".into());
+            }
             crate::job_engine::fail_job(&job_id, &error, db)?;
+            runtime.finish(&job_id);
             Err(error)
         }
     }
@@ -1182,6 +1385,7 @@ pub async fn propose_fix(
     fix_instruction: &str,
     target_file: Option<&str>,
     db: &Db,
+    runtime: &crate::job_engine::JobRuntime,
 ) -> Result<PatchProposal, String> {
     use crate::ai_provider::{self, ContextPack};
 
@@ -1252,12 +1456,7 @@ pub async fn propose_fix(
         .to_string(),
         db,
     )?;
-    crate::job_engine::append_job_event(
-        &job_id,
-        "ai_propose_fix_started",
-        &serde_json::json!({"repoId": repo_id, "targetFile": target_file}).to_string(),
-        db,
-    )?;
+    let cancellation = crate::job_engine::begin_job(&job_id, db, runtime)?;
 
     let outcome = async {
         let response = ai_provider::call_ai(&provider, &prompt, system_prompt.as_deref(), model)
@@ -1270,6 +1469,9 @@ pub async fn propose_fix(
         let patch_content = clean_patch_content(&response.content);
         if !ai_provider::scan_for_secrets(&patch_content).is_empty() {
             return Err("AI patch contains potential secret material and was not stored".into());
+        }
+        if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("AI fix proposal cancelled by user".into());
         }
         let file_path = validate_patch_paths(&patch_content, target_file)?;
         let redacted_instruction = ai_provider::redact_secrets(fix_instruction);
@@ -1326,7 +1528,12 @@ pub async fn propose_fix(
 
     match outcome {
         Ok(proposal) => {
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                runtime.finish(&job_id);
+                return Err("AI fix proposal cancelled by user".into());
+            }
             crate::job_engine::complete_job(&job_id, db)?;
+            runtime.finish(&job_id);
             crate::job_engine::append_job_event(
                 &job_id,
                 "ai_propose_fix_completed",
@@ -1336,7 +1543,12 @@ pub async fn propose_fix(
             Ok(proposal)
         }
         Err(error) => {
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+                runtime.finish(&job_id);
+                return Err("AI fix proposal cancelled by user".into());
+            }
             crate::job_engine::fail_job(&job_id, &error, db)?;
+            runtime.finish(&job_id);
             Err(error)
         }
     }
