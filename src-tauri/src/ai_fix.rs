@@ -537,8 +537,10 @@ pub fn recover_interrupted_patch_operations(db: &Db) -> Result<usize, String> {
         let Some(next_status) = next_status else {
             continue;
         };
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
+        let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let changed = tx
+            .execute(
             "UPDATE patch_proposal
              SET status = ?1,
                  applied_at = CASE WHEN ?1 = 'applied' THEN COALESCE(applied_at, datetime('now')) ELSE applied_at END,
@@ -547,7 +549,26 @@ pub fn recover_interrupted_patch_operations(db: &Db) -> Result<usize, String> {
             rusqlite::params![next_status, id, status],
         )
         .map_err(|e| e.to_string())?;
-        recovered += 1;
+        if changed == 1 {
+            tx.execute(
+                "INSERT INTO audit_log (id, action, subject, scope, capability, risk_level, detail)
+                 VALUES (?1, 'patch_state_recovered', ?2, ?3, 'fs.write_patch', 'high', ?4)",
+                rusqlite::params![
+                    uuid::Uuid::new_v4().to_string(),
+                    format!("patch:{}", id),
+                    file_path,
+                    serde_json::json!({
+                        "previousStatus": status,
+                        "recoveredStatus": next_status,
+                        "currentFileHash": current_hash,
+                    })
+                    .to_string(),
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            recovered += 1;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
     }
     Ok(recovered)
 }

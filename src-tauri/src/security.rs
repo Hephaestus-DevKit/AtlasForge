@@ -73,10 +73,14 @@ pub fn authorize_path<'a>(path: &Path, roots: &'a [WorkspaceRoot]) -> Option<&'a
         Err(_) => return None,
     };
     for root in roots {
-        // Since root.path is already canonicalized when saved to the database,
-        // we can directly convert it to a Path without performing redundant I/O.
-        let root_path = Path::new(&root.path);
-        if path_is_within(&canonical, root_path) {
+        // Re-canonicalize here as well. Windows can surface the same directory
+        // through long and 8.3 short names (notably runner temp directories),
+        // and callers may construct in-memory roots outside the persistence
+        // path that normally canonicalizes them on save.
+        let Ok(root_path) = Path::new(&root.path).canonicalize() else {
+            continue;
+        };
+        if path_is_within(&canonical, &root_path) {
             return Some(root);
         }
     }
