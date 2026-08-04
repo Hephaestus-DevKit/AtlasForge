@@ -661,7 +661,6 @@ mod tests {
         assert!(result.stdout.len() <= MAX_CAPTURE_BYTES);
     }
 
-
     #[test]
     fn cancellation_stops_a_running_command() {
         #[cfg(windows)]

@@ -2,12 +2,7 @@ use crate::db::Db;
 use crate::models::*;
 use std::path::Path;
 
-const IMPLEMENTED_TOOLS: &[&str] = &[
-    "fs.list",
-    "fs.read",
-    "git.status",
-    "git.diff",
-];
+const IMPLEMENTED_TOOLS: &[&str] = &["fs.list", "fs.read", "git.status", "git.diff"];
 
 fn is_implemented(tool_name: &str) -> bool {
     IMPLEMENTED_TOOLS.contains(&tool_name)
@@ -371,11 +366,7 @@ fn dry_run_preview(tool_name: &str, input: &serde_json::Value) -> serde_json::Va
     }
 }
 
-fn execute_tool(
-    tool_name: &str,
-    input: &serde_json::Value,
-    roots: &[WorkspaceRoot],
-) -> ToolResult {
+fn execute_tool(tool_name: &str, input: &serde_json::Value, roots: &[WorkspaceRoot]) -> ToolResult {
     match tool_name {
         "fs.list" => {
             let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
@@ -433,18 +424,16 @@ fn execute_tool(
                     .map_err(|_| "File is not valid UTF-8 text".to_string())
             })();
             match read {
-                Ok((content, truncated)) => {
-                    ToolResult {
-                        success: true,
-                        output: content,
-                        error: if truncated {
-                            Some("Output truncated at 100KB".into())
-                        } else {
-                            None
-                        },
-                        was_dry_run: false,
-                    }
-                }
+                Ok((content, truncated)) => ToolResult {
+                    success: true,
+                    output: content,
+                    error: if truncated {
+                        Some("Output truncated at 100KB".into())
+                    } else {
+                        None
+                    },
+                    was_dry_run: false,
+                },
                 Err(e) => ToolResult {
                     success: false,
                     output: String::new(),
@@ -466,11 +455,8 @@ fn execute_tool(
                     "--no-textconv",
                 ]
             };
-            match crate::process_runner::run_default(
-                "git",
-                &args,
-                Some(std::path::Path::new(path)),
-            ) {
+            match crate::process_runner::run_default("git", &args, Some(std::path::Path::new(path)))
+            {
                 Ok(output) => {
                     if output.success {
                         ToolResult {
@@ -635,11 +621,7 @@ mod tests {
         let input = serde_json::json!({"path": temp.path().join(".env")});
         assert!(check_permission("fs.read", &input, &roots, "assisted").is_err());
 
-        let listing = execute_tool(
-            "fs.list",
-            &serde_json::json!({"path": temp.path()}),
-            &roots,
-        );
+        let listing = execute_tool("fs.list", &serde_json::json!({"path": temp.path()}), &roots);
         assert!(listing.output.contains("readme.txt"));
         assert!(!listing.output.contains(".env"));
     }

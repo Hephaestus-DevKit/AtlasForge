@@ -286,10 +286,7 @@ pub fn consume_request(
     expected_context_hash: &str,
     db: &Db,
 ) -> Result<(), String> {
-    consume_requests(
-        &[(id, capability, repo_id, expected_context_hash)],
-        db,
-    )
+    consume_requests(&[(id, capability, repo_id, expected_context_hash)], db)
 }
 
 pub fn request_rollback(proposal_id: &str, db: &Db) -> Result<PermissionRequest, String> {
@@ -342,7 +339,15 @@ fn rollback_context(
              FROM patch_proposal p JOIN repository r ON r.id = p.repo_id
              WHERE p.id = ?1",
             rusqlite::params![proposal_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .map_err(|error| format!("Patch proposal not found: {error}"))?;
     drop(conn);
@@ -370,7 +375,15 @@ fn rollback_context(
         current_hash,
         hash_text(&patch_content),
     ));
-    Ok((repo_id, repo_path, file_path, head, git_status, current_hash, context_hash))
+    Ok((
+        repo_id,
+        repo_path,
+        file_path,
+        head,
+        git_status,
+        current_hash,
+        context_hash,
+    ))
 }
 
 /// Validate and consume a group of approvals atomically. No request is consumed
@@ -394,10 +407,7 @@ pub fn consume_requests(
         if actual.0 != "approved" {
             return Err(format!("Approval request is '{}', not approved", actual.0));
         }
-        if actual.1 != *capability
-            || actual.2.as_deref() != *repo_id
-            || actual.3 != *context_hash
-        {
+        if actual.1 != *capability || actual.2.as_deref() != *repo_id || actual.3 != *context_hash {
             return Err("Approval does not match the current operation context".into());
         }
     }
@@ -505,12 +515,9 @@ fn write_audit(id: &str, decision: &str, db: &Db) -> Result<(), String> {
 }
 
 fn git_output(repo_path: &str, args: &[&str]) -> Result<String, String> {
-    let output = crate::process_runner::run_default(
-        "git",
-        args,
-        Some(std::path::Path::new(repo_path)),
-    )
-        .map_err(|error| format!("Cannot run git: {}", error))?;
+    let output =
+        crate::process_runner::run_default("git", args, Some(std::path::Path::new(repo_path)))
+            .map_err(|error| format!("Cannot run git: {}", error))?;
     if !output.success {
         return Err(output.stderr.trim().to_string());
     }

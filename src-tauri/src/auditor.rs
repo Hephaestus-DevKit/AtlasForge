@@ -5,11 +5,7 @@ use std::path::Path;
 
 /// Check whether a repo has no remote origin (local-only).
 fn is_local_repo(path: &Path) -> bool {
-    !crate::process_runner::run_default(
-        "git",
-        &["remote", "get-url", "origin"],
-        Some(path),
-    )
+    !crate::process_runner::run_default("git", &["remote", "get-url", "origin"], Some(path))
         .map(|o| o.success)
         .unwrap_or(true)
 }
@@ -698,13 +694,10 @@ fn check_git_hygiene(path: &Path) -> CategoryScore {
     let mut score = 90;
 
     // Check for large files in git
-    let is_dirty = crate::process_runner::run_default(
-        "git",
-        &["status", "--porcelain"],
-        Some(path),
-    )
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false);
+    let is_dirty =
+        crate::process_runner::run_default("git", &["status", "--porcelain"], Some(path))
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
 
     if is_dirty {
         score -= 5;

@@ -234,8 +234,8 @@ pub fn resolve_github_repo(
         &["config", "--get", "remote.origin.url"],
         Some(std::path::Path::new(worktree_path)),
     )
-        .map(|o| o.stdout.trim().to_string())
-        .map_err(|e| format!("Cannot get git remote: {}", e))?;
+    .map(|o| o.stdout.trim().to_string())
+    .map_err(|e| format!("Cannot get git remote: {}", e))?;
 
     if remote_url.is_empty() {
         return Err("No remote.origin.url configured".into());
@@ -255,7 +255,7 @@ pub fn resolve_github_repo(
         ],
         None,
     )
-        .map_err(|e| format!("gh CLI not available: {}", e))?;
+    .map_err(|e| format!("gh CLI not available: {}", e))?;
 
     let (is_fork, default_branch, visibility) = if repo_info.success {
         let info: Value = serde_json::from_str(&repo_info.stdout).unwrap_or(Value::Null);
@@ -320,14 +320,14 @@ pub fn sync_workflow_runs(
         ],
         None,
     )
-        .map_err(|e| format!("gh CLI not available: {}", e))?;
+    .map_err(|e| format!("gh CLI not available: {}", e))?;
 
     if !output.success {
         return Err(format!("Failed to fetch workflow runs: {}", output.stderr));
     }
 
-    let runs: Vec<Value> = serde_json::from_str(&output.stdout)
-        .map_err(|e| format!("Invalid response: {}", e))?;
+    let runs: Vec<Value> =
+        serde_json::from_str(&output.stdout).map_err(|e| format!("Invalid response: {}", e))?;
 
     let mut workflow_runs = Vec::new();
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -425,14 +425,14 @@ pub fn sync_prs(integration: &GitHubIntegration, db: &Db) -> Result<Vec<GitHubPR
         ],
         None,
     )
-        .map_err(|e| format!("gh CLI not available: {}", e))?;
+    .map_err(|e| format!("gh CLI not available: {}", e))?;
 
     if !output.success {
         return Err(format!("Failed to fetch PRs: {}", output.stderr));
     }
 
-    let prs: Vec<Value> = serde_json::from_str(&output.stdout)
-        .map_err(|e| format!("Invalid response: {}", e))?;
+    let prs: Vec<Value> =
+        serde_json::from_str(&output.stdout).map_err(|e| format!("Invalid response: {}", e))?;
 
     let mut result = Vec::new();
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -522,14 +522,14 @@ pub fn sync_releases(
         ],
         None,
     )
-        .map_err(|e| format!("gh CLI not available: {}", e))?;
+    .map_err(|e| format!("gh CLI not available: {}", e))?;
 
     if !output.success {
         return Err(format!("Failed to fetch releases: {}", output.stderr));
     }
 
-    let releases: Vec<Value> = serde_json::from_str(&output.stdout)
-        .map_err(|e| format!("Invalid response: {}", e))?;
+    let releases: Vec<Value> =
+        serde_json::from_str(&output.stdout).map_err(|e| format!("Invalid response: {}", e))?;
 
     let mut result = Vec::new();
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -720,7 +720,7 @@ pub fn rerun_workflow(integration: &GitHubIntegration, run_id: &str) -> Result<(
         ],
         None,
     )
-        .map_err(|e| format!("gh CLI not available: {}", e))?;
+    .map_err(|e| format!("gh CLI not available: {}", e))?;
 
     if !output.success {
         return Err(format!("Failed to rerun workflow: {}", output.stderr));
@@ -916,7 +916,9 @@ mod tests {
             )
             .unwrap();
         let evidence_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM github_workflow_run", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM github_workflow_run", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(integration_id, "new");
         assert_eq!(evidence_count, 0);

@@ -45,7 +45,9 @@ impl Db {
             fs::create_dir_all(parent)?;
         }
         let mut conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+        )?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         if integrity != "ok" {
             return Err(DbError::Integrity(integrity));
@@ -119,7 +121,9 @@ impl Db {
     /// This allows concurrent readers and writers in WAL mode without locking the main conn Mutex.
     pub fn connection(&self) -> Result<Connection, rusqlite::Error> {
         let conn = Connection::open(&self.path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+        )?;
         Ok(conn)
     }
 }

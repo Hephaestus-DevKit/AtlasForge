@@ -439,7 +439,8 @@ pub async fn start_scan(
         let scan_result = tauri::async_runtime::spawn_blocking(move || {
             let result = scan_root(&root_for_scan, &db_for_scan);
             for repo in &result.0 {
-                if let Err(e) = profiler::profile_repo(&repo.id, &repo.worktree_path, &db_for_scan) {
+                if let Err(e) = profiler::profile_repo(&repo.id, &repo.worktree_path, &db_for_scan)
+                {
                     log::warn!("Failed to profile repo {}: {}", repo.worktree_path, e);
                 }
             }

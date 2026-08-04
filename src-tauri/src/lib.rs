@@ -29,10 +29,13 @@ pub fn run() {
             let db_path = get_db_path(app.handle())?;
             migrate_legacy_database(&db_path)?;
             let db = db::Db::new(&db_path).map_err(std::io::Error::other)?;
-            let recovered_patches = ai_fix::recover_interrupted_patch_operations(&db)
-                .map_err(std::io::Error::other)?;
+            let recovered_patches =
+                ai_fix::recover_interrupted_patch_operations(&db).map_err(std::io::Error::other)?;
             if recovered_patches > 0 {
-                log::warn!("Reconciled {} interrupted patch operations", recovered_patches);
+                log::warn!(
+                    "Reconciled {} interrupted patch operations",
+                    recovered_patches
+                );
             }
             let recovered =
                 job_engine::recover_interrupted_jobs(&db).map_err(std::io::Error::other)?;

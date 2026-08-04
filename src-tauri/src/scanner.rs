@@ -50,8 +50,6 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
         );
     }
 
-
-
     let mut candidate_paths = Vec::new();
     let mut errors = Vec::new();
     let mut visited = std::collections::HashSet::new();
@@ -107,7 +105,6 @@ pub fn scan_root(root: &WorkspaceRoot, db: &Db) -> (Vec<Repository>, Vec<ScanErr
             }
             true
         })
-
     {
         let entry = match entry {
             Ok(e) => e,
@@ -350,7 +347,11 @@ fn ensure_project_asset(
 /// Mark assets that were not observed during a fully successful root scan as
 /// unavailable. Historical repository records remain available for audit and
 /// foreign-key integrity, while normal UI queries hide them.
-pub fn reconcile_root_assets(root_id: &str, scan_started_at: &str, db: &Db) -> Result<usize, String> {
+pub fn reconcile_root_assets(
+    root_id: &str,
+    scan_started_at: &str,
+    db: &Db,
+) -> Result<usize, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "UPDATE project_asset
@@ -436,10 +437,7 @@ fn git_command(repo_path: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|e| format!("git command failed: {}", e))?;
 
     if !output.success {
-        return Err(format!(
-            "git {:?} failed: {}",
-            args, output.stderr
-        ));
+        return Err(format!("git {:?} failed: {}", args, output.stderr));
     }
 
     Ok(output.stdout.trim().to_string())

@@ -281,25 +281,29 @@ pub fn apply_patch_cancellable(
 
     let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let changed = tx.execute(
-        "UPDATE patch_proposal
+    let changed = tx
+        .execute(
+            "UPDATE patch_proposal
          SET status = 'applied', applied_at = ?1
          WHERE id = ?2 AND status IN ('proposed', 'approved') AND applied_file_hash = ?3",
-        rusqlite::params![
-            now,
-            proposal_id,
-            applied_file_hash,
-        ],
-    )
-    .map_err(|e| e.to_string())?;
+            rusqlite::params![now, proposal_id, applied_file_hash,],
+        )
+        .map_err(|e| e.to_string())?;
     if changed != 1 {
         drop(tx);
         drop(conn);
         let compensated = run_git_apply(&repo_path, &patch_content, &["-R"]).is_ok()
-            && crate::permissions::hash_text_file(&target_path).ok().as_deref() == Some(base_file_hash.as_str());
+            && crate::permissions::hash_text_file(&target_path)
+                .ok()
+                .as_deref()
+                == Some(base_file_hash.as_str());
         return Err(format!(
             "Patch state could not be finalized after the file changed; compensating rollback {}",
-            if compensated { "succeeded" } else { "failed and startup recovery is required" }
+            if compensated {
+                "succeeded"
+            } else {
+                "failed and startup recovery is required"
+            }
         ));
     }
     tx.execute(
@@ -316,7 +320,8 @@ pub fn apply_patch_cancellable(
             "baseFileHash": base_file_hash,
             "appliedFileHash": applied_file_hash,
             "isolatedVerification": verification_json.is_some(),
-            }).to_string(),
+            })
+            .to_string(),
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -422,11 +427,12 @@ pub fn rollback_patch_cancellable(
     run_git_apply(&repo_path, &patch_content, &["--check", "-R"])
         .map_err(|error| format!("Rollback validation failed: {}", error))?;
     if let Err(reverse_error) = run_git_apply(&repo_path, &patch_content, &["-R"]) {
-        let backup = backup_content
-            .as_deref()
-            .ok_or_else(|| format!("Rollback failed and no backup is available: {reverse_error}"))?;
-        std::fs::write(&target_path, backup)
-            .map_err(|error| format!("Rollback and backup restoration failed: {reverse_error}; {error}"))?;
+        let backup = backup_content.as_deref().ok_or_else(|| {
+            format!("Rollback failed and no backup is available: {reverse_error}")
+        })?;
+        std::fs::write(&target_path, backup).map_err(|error| {
+            format!("Rollback and backup restoration failed: {reverse_error}; {error}")
+        })?;
     }
     let restored_hash = crate::permissions::hash_text_file(&target_path)?;
     if restored_hash != expected_base_hash {
@@ -455,7 +461,8 @@ pub fn rollback_patch_cancellable(
             "proposalId": proposal_id,
             "filePath": file_path,
             "restoredHash": restored_hash,
-            }).to_string(),
+            })
+            .to_string(),
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -466,7 +473,14 @@ pub fn rollback_patch_cancellable(
 /// final database transaction. Recovery only changes state when the current
 /// file hash exactly matches a stored baseline or isolated applied hash.
 pub fn recover_interrupted_patch_operations(db: &Db) -> Result<usize, String> {
-    let candidates: Vec<(String, String, String, String, Option<String>, Option<String>)> = {
+    let candidates: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    )> = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
@@ -478,12 +492,18 @@ pub fn recover_interrupted_patch_operations(db: &Db) -> Result<usize, String> {
                     OR p.status = 'applied'",
             )
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?
     };

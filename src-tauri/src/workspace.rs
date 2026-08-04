@@ -106,15 +106,11 @@ mod tests {
     #[test]
     fn rejects_invalid_modes_and_globs() {
         assert!(validate_root_settings(&root_input("admin", vec![])).is_err());
-        assert!(validate_root_settings(&root_input(
-            "read_only",
-            vec!["[unterminated".into()]
-        ))
-        .is_err());
-        assert!(validate_root_settings(&root_input(
-            "read_write",
-            vec!["clients/**".into()]
-        ))
-        .is_ok());
+        assert!(
+            validate_root_settings(&root_input("read_only", vec!["[unterminated".into()])).is_err()
+        );
+        assert!(
+            validate_root_settings(&root_input("read_write", vec!["clients/**".into()])).is_ok()
+        );
     }
 }

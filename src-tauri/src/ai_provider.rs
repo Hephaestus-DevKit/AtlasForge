@@ -714,7 +714,9 @@ async fn call_anthropic(
                 key_ref
             )
         })?,
-        None => return Err("No API key environment variable configured for Anthropic provider".into()),
+        None => {
+            return Err("No API key environment variable configured for Anthropic provider".into())
+        }
     };
 
     let mut payload = serde_json::json!({
@@ -873,9 +875,15 @@ mod tests {
             "Authorization: Bearer opaque.access-token_123456\n",
         );
         let matches = scan_for_secrets(content);
-        assert!(matches.iter().any(|item| item.label == "GitHub fine-grained PAT"));
-        assert!(matches.iter().any(|item| item.label == "OpenAI-compatible API key"));
-        assert!(matches.iter().any(|item| item.label == "Authorization header"));
+        assert!(matches
+            .iter()
+            .any(|item| item.label == "GitHub fine-grained PAT"));
+        assert!(matches
+            .iter()
+            .any(|item| item.label == "OpenAI-compatible API key"));
+        assert!(matches
+            .iter()
+            .any(|item| item.label == "Authorization header"));
 
         let redacted = redact_secrets(content);
         assert!(!redacted.contains("github_pat_"));

@@ -1,14 +1,23 @@
 use crate::models::WorkspaceRoot;
 use std::path::Path;
 
-const SENSITIVE_DIRECTORY_NAMES: &[&str] = &[
-    ".aws", ".azure", ".gnupg", ".ssh", "credentials", "secrets",
-];
+const SENSITIVE_DIRECTORY_NAMES: &[&str] =
+    &[".aws", ".azure", ".gnupg", ".ssh", "credentials", "secrets"];
 
 const SENSITIVE_FILE_NAMES: &[&str] = &[
-    ".aws_credentials", ".netrc", ".npmrc", ".pypirc", "authorized_keys",
-    "credentials.json", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa",
-    "known_hosts", "service-account.json", "serviceaccount.json",
+    ".aws_credentials",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "authorized_keys",
+    "credentials.json",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_rsa",
+    "known_hosts",
+    "service-account.json",
+    "serviceaccount.json",
 ];
 
 #[cfg(windows)]
@@ -95,7 +104,6 @@ pub fn authorize_write(path: &Path, roots: &[WorkspaceRoot]) -> Result<(), Strin
 /// Check if a path should be excluded based on root exclude globs.
 #[allow(dead_code)]
 pub fn is_excluded(path: &Path, root: &WorkspaceRoot) -> bool {
-
     let compiled: Vec<glob::Pattern> = root
         .exclude_globs
         .iter()
@@ -164,8 +172,6 @@ pub fn is_excluded_fast(
     }
     false
 }
-
-
 
 /// Default exclude patterns applied to all roots.
 pub const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
@@ -305,14 +311,29 @@ mod tests {
         };
 
         // Standard matching casing
-        assert!(is_excluded(Path::new("C:\\Users\\User\\Projects\\node_modules\\react\\index.js"), &root));
+        assert!(is_excluded(
+            Path::new("C:\\Users\\User\\Projects\\node_modules\\react\\index.js"),
+            &root
+        ));
         // Mismatched casing on root
-        assert!(is_excluded(Path::new("c:\\users\\user\\projects\\node_modules\\react\\index.js"), &root));
+        assert!(is_excluded(
+            Path::new("c:\\users\\user\\projects\\node_modules\\react\\index.js"),
+            &root
+        ));
         // Forward slashes in path
-        assert!(is_excluded(Path::new("C:/Users/User/Projects/node_modules/react/index.js"), &root));
+        assert!(is_excluded(
+            Path::new("C:/Users/User/Projects/node_modules/react/index.js"),
+            &root
+        ));
         // Subpath match (e.g. dist/output.json glob with forward slash)
-        assert!(is_excluded(Path::new("C:\\Users\\User\\Projects\\dist\\output.json"), &root));
-        assert!(is_excluded(Path::new("C:/Users/User/Projects/dist/output.json"), &root));
+        assert!(is_excluded(
+            Path::new("C:\\Users\\User\\Projects\\dist\\output.json"),
+            &root
+        ));
+        assert!(is_excluded(
+            Path::new("C:/Users/User/Projects/dist/output.json"),
+            &root
+        ));
     }
 
     #[cfg(windows)]
@@ -367,11 +388,13 @@ pub fn authorize_read<'a>(
     let root = authorize_path(path, roots)
         .ok_or_else(|| format!("Path {:?} is not within any authorized root", path))?;
     if is_sensitive_path(path) {
-        return Err(format!("Path {:?} is blocked by the sensitive-path policy", path));
+        return Err(format!(
+            "Path {:?} is blocked by the sensitive-path policy",
+            path
+        ));
     }
     if is_excluded(path, root) {
         return Err(format!("Path {:?} is excluded by workspace policy", path));
     }
     Ok(root)
 }
-

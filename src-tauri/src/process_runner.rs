@@ -15,7 +15,10 @@ pub struct ProcessOutput {
     pub truncated: bool,
 }
 
-fn drain_bounded<R: Read + Send + 'static>(mut reader: R, limit: usize) -> thread::JoinHandle<(Vec<u8>, bool)> {
+fn drain_bounded<R: Read + Send + 'static>(
+    mut reader: R,
+    limit: usize,
+) -> thread::JoinHandle<(Vec<u8>, bool)> {
     thread::spawn(move || {
         let mut captured = Vec::with_capacity(limit.min(64 * 1024));
         let mut buffer = [0_u8; 8192];
@@ -159,14 +162,12 @@ pub fn run_with_input(
     })
 }
 
-pub fn run_default(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<ProcessOutput, String> {
-    run(
-        program,
-        args,
-        cwd,
-        DEFAULT_TIMEOUT,
-        DEFAULT_OUTPUT_LIMIT,
-    )
+pub fn run_default(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+) -> Result<ProcessOutput, String> {
+    run(program, args, cwd, DEFAULT_TIMEOUT, DEFAULT_OUTPUT_LIMIT)
 }
 
 #[cfg(test)]

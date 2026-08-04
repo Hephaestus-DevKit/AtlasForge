@@ -110,37 +110,32 @@ pub fn index_repo(repo_id: &str, worktree_path: &str, db: &Db) -> Result<IndexSt
             let processed_ref = &processed_files;
             let errors_ref = &process_errors;
             let queue_ref = &queue;
-            threads.push(s.spawn(move || {
-                loop {
-                    let task = queue_ref
-                        .lock()
-                        .expect("index queue poisoned")
-                        .pop_front();
-                    let Some((relative_path, abs_path, metadata)) = task else {
-                        break;
-                    };
-                    match std::fs::read_to_string(&abs_path) {
-                        Ok(content) => {
-                            let content = crate::ai_provider::redact_secrets(&content);
-                            let language = detect_language_from_path(&relative_path);
-                            let mime_type = detect_mime_type(&relative_path);
-                            let content_hash = simple_hash(&content);
-                            let chunks = chunk_content(&content, &relative_path);
-                            processed_ref.lock().unwrap().push((
-                                relative_path,
-                                mime_type,
-                                language,
-                                metadata,
-                                content_hash,
-                                chunks,
-                            ));
-                        }
-                        Err(e) => {
-                            errors_ref
-                                .lock()
-                                .unwrap()
-                                .push(format!("{}: {}", relative_path, e));
-                        }
+            threads.push(s.spawn(move || loop {
+                let task = queue_ref.lock().expect("index queue poisoned").pop_front();
+                let Some((relative_path, abs_path, metadata)) = task else {
+                    break;
+                };
+                match std::fs::read_to_string(&abs_path) {
+                    Ok(content) => {
+                        let content = crate::ai_provider::redact_secrets(&content);
+                        let language = detect_language_from_path(&relative_path);
+                        let mime_type = detect_mime_type(&relative_path);
+                        let content_hash = simple_hash(&content);
+                        let chunks = chunk_content(&content, &relative_path);
+                        processed_ref.lock().unwrap().push((
+                            relative_path,
+                            mime_type,
+                            language,
+                            metadata,
+                            content_hash,
+                            chunks,
+                        ));
+                    }
+                    Err(e) => {
+                        errors_ref
+                            .lock()
+                            .unwrap()
+                            .push(format!("{}: {}", relative_path, e));
                     }
                 }
             }));
@@ -615,8 +610,6 @@ fn collect_indexable_files(
 
     result
 }
-
-
 
 fn remove_stale_documents(
     repo_id: &str,
