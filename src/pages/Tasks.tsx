@@ -8,7 +8,7 @@ import { EmptyState } from "../components/EmptyState";
 function parsePayload(raw: string): Record<string, unknown> | null {
   try {
     return JSON.parse(raw);
-  } catch (_e) {
+  } catch {
     return null;
   }
 }
@@ -232,7 +232,7 @@ export function Tasks() {
     if (!iso) return "";
     try {
       return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    } catch (_err) {
+    } catch {
       return iso;
     }
   }
