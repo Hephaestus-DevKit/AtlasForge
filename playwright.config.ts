@@ -8,6 +8,10 @@ export default defineConfig({
     baseURL: "http://localhost:1420",
     headless: true,
   },
+  projects: [
+    { name: "webkit", use: { browserName: "webkit" } },
+    ...(process.env.CI ? [{ name: "chromium", use: { browserName: "chromium" as const } }] : []),
+  ],
   webServer: {
     command: "npm run dev",
     port: 1420,

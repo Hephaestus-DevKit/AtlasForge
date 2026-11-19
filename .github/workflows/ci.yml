@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Install Playwright browser
-        run: npx playwright install chromium
+        run: npx playwright install chromium webkit
       - name: Verify development gates
         run: npm run verify-dev -- -E2E
       - name: Build native application

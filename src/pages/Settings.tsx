@@ -145,7 +145,7 @@ export function Settings() {
       if (configText.trim()) {
         try {
           parsedConfig = JSON.parse(configText);
-        } catch (e) {
+        } catch {
           showToast("Invalid Custom Options JSON format", "error");
           return;
         }
