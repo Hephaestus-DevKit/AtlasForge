@@ -14,7 +14,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run",
     "test:rust": "cargo +stable-x86_64-pc-windows-msvc test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc",
-    "test:e2e": "playwright test",
+    "test:e2e": "node --test e2e/safari.mjs",
     "verify-dev": "powershell -ExecutionPolicy Bypass -File scripts/verify-release.ps1",
     "verify-release": "powershell -ExecutionPolicy Bypass -File scripts/verify-release.ps1",
     "tauri": "tauri"
@@ -27,7 +27,6 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2.11.4",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.3",
@@ -41,6 +40,7 @@
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.7",
     "jsdom": "^30.0.1",
+    "selenium-webdriver": "4.35.0",
     "typescript": "^5.5.3",
     "vite": "8.3.8",
     "vitest": "4.1.12"

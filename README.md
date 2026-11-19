@@ -64,12 +64,11 @@ AI Provider 的密钥通过环境变量提供，例如 `OPENAI_API_KEY`、`ANTHR
 # TypeScript、ESLint、前端测试、构建、Rust 测试和依赖审计
 npm run verify-dev
 
-# 本地浏览器测试默认使用 WebKit；Windows CI 同时运行 Chromium
-npx playwright install webkit
-npm run verify-dev -- -E2E
+# 在 macOS 的 Safari 开发者设置中允许远程自动化后运行
+npm run test:e2e
 
 # 发布前额外构建 Tauri bundle
-npm run verify-release -- -E2E -FullBuild
+npm run verify-release -- -FullBuild
 ```
 
 也可以分别执行 `npm run typecheck`、`npm run lint`、`npm test`、`npm run test:rust`、`npm run build` 和 `npm run test:e2e`。
